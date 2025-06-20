@@ -1,7 +1,17 @@
-import { createClient } from "@supabase/supabase-js";
-import "https://deno.land/x/dotenv@v3.2.0/load.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
 
-const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+// Load environment variables
+const env = await load();
 
-export const supabase = createClient(supabaseUrl, supabaseKey); 
+// Get Supabase credentials
+const supabaseUrl = env['SUPABASE_URL'];
+const supabaseKey = env['SUPABASE_ANON_KEY'];
+
+console.log('Attempting to connect to Supabase with URL:', !!supabaseUrl);
+
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error('Missing Supabase environment variables in .env file')
+}
+
+export const supabase = createClient(supabaseUrl, supabaseKey) 

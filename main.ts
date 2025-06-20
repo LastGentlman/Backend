@@ -1,17 +1,25 @@
-import { Hono } from "hono/mod.ts";
-import { cors } from "hono/cors.ts";
-import test from "./routes/test.ts";
+import { Hono } from "hono";
+import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
+import testRoutes from "./routes/test.ts";
+
+// Load environment variables from .env file
+const env = await load();
+console.log("Loaded .env file:", env);
+
+// Set environment variables for Deno
+for (const [key, value] of Object.entries(env)) {
+  Deno.env.set(key, value);
+}
 
 const app = new Hono();
 
-// Apply CORS middleware
-app.use("*", cors());
-
-// Register routes
-app.route("/test", test);
-
 app.get("/", (c) => {
-  return c.text("Hello, World!");
+  return c.text("Hello Hono!");
 });
 
-Deno.serve(app.fetch); 
+// Add test routes
+app.route("/api", testRoutes);
+
+// Start the server on port 3000
+console.log("Starting server on http://localhost:3000");
+Deno.serve({ port: 3000 }, app.fetch); 
