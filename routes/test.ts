@@ -1,10 +1,12 @@
 import { Hono } from "https://deno.land/x/hono@v3.12.0/mod.ts"
-import { supabase } from '../utils/supabase.ts'
+import { getSupabaseClient } from '../utils/supabase.ts'
 
 const test = new Hono()
 
 test.get('/test-connection', async (c) => {
   try {
+    const supabase = getSupabaseClient();
+    
     // Simple query to test connection, checks if 'profiles' table exists.
     const { data, error } = await supabase
       .from('profiles')
