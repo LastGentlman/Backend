@@ -7,10 +7,10 @@ const orders = new Hono();
 
 // Define context type
 interface RequestContext {
-  user: any;
+  user: Record<string, unknown>;
   context: {
-    employee: any;
-    business: any;
+    employee: Record<string, unknown>;
+    business: Record<string, unknown>;
     isOwner: boolean;
   };
 }
@@ -18,17 +18,17 @@ interface RequestContext {
 // Extend Hono's context to include our custom properties
 declare module "hono" {
   interface ContextVariableMap {
-    user: any;
+    user: Record<string, unknown>;
     context: {
-      employee: any;
-      business: any;
+      employee: Record<string, unknown>;
+      business: Record<string, unknown>;
       isOwner: boolean;
     };
   }
 }
 
 // Middleware to authenticate requests
-async function authMiddleware(c: any, next: any) {
+async function authMiddleware(c: { req: { header: (name: string) => string | undefined }; set: (key: string, value: unknown) => void; json: (data: unknown, status?: number) => Response }, next: () => Promise<void>) {
   const authHeader = c.req.header("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return c.json({ error: "Missing or invalid authorization header" }, 401);
@@ -233,12 +233,11 @@ orders.patch("/:id", authMiddleware, async (c) => {
 // Sync offline orders with conflict resolution
 orders.post("/sync", authMiddleware, async (c) => {
   const user = c.get("user") as RequestContext["user"];
-  const context = c.get("context") as RequestContext["context"];
   const { orders: offlineOrders } = await c.req.json();
   
   try {
     // Usar el sistema de resolución de conflictos
-    const result = await syncAllPendingOrders(offlineOrders, user.id);
+    const result = await syncAllPendingOrders(offlineOrders, user.id as string);
     
     return c.json({
       synced: result.synced,
@@ -265,7 +264,7 @@ orders.post("/resolve-conflict/:orderId", authMiddleware, async (c) => {
   
   try {
     const resolution = await ConflictResolver.resolveOrderConflict(localOrder, serverOrder);
-    await ConflictResolver.applyResolution(orderId, resolution, user.id);
+    await ConflictResolver.applyResolution(orderId, resolution, user.id as string);
     
     return c.json({
       success: true,

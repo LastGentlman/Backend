@@ -7,11 +7,13 @@ El sistema de resolución de conflictos implementa la estrategia **Last-Write-Wi
 ## Características Principales
 
 ### 🔄 Resolución Automática
+
 - **Last-Write-Wins**: El cambio más reciente siempre gana
 - **Detección automática**: Identifica conflictos por campo específico
 - **Auditoría completa**: Registra todas las resoluciones para análisis
 
 ### 📊 Campos Monitoreados
+
 - `client_name` - Nombre del cliente
 - `client_phone` - Teléfono del cliente  
 - `total` - Total de la orden
@@ -70,9 +72,11 @@ await ConflictResolver.applyResolution(
 ## Endpoints API
 
 ### POST `/api/orders/sync`
+
 Sincroniza órdenes offline con resolución automática de conflictos.
 
 **Request:**
+
 ```json
 {
   "orders": [
@@ -87,6 +91,7 @@ Sincroniza órdenes offline con resolución automática de conflictos.
 ```
 
 **Response:**
+
 ```json
 {
   "synced": [...],
@@ -97,9 +102,11 @@ Sincroniza órdenes offline con resolución automática de conflictos.
 ```
 
 ### POST `/api/orders/resolve-conflict/:orderId`
+
 Resuelve un conflicto específico manualmente.
 
 **Request:**
+
 ```json
 {
   "localOrder": { ... },
@@ -108,9 +115,11 @@ Resuelve un conflicto específico manualmente.
 ```
 
 ### GET `/api/orders/conflict-history`
+
 Obtiene el historial de resoluciones de conflictos.
 
 ### GET `/api/orders/conflict-stats`
+
 Obtiene estadísticas de conflictos para el negocio.
 
 ## Estrategia Last-Write-Wins
@@ -118,6 +127,7 @@ Obtiene estadísticas de conflictos para el negocio.
 ### Algoritmo de Resolución
 
 1. **Comparación de Timestamps**
+
    ```typescript
    const localTimestamp = new Date(localOrder.last_modified_at);
    const serverTimestamp = new Date(serverOrder.last_modified_at);
@@ -279,4 +289,4 @@ console.log('Conflict detected:', {
   conflicts: ConflictResolver.detectFieldConflicts(localOrder, serverOrder),
   resolution: resolution
 });
-``` 
+```
