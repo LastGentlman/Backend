@@ -24,7 +24,7 @@ jobs:
           deno-version: v2.x
 
       - name: Build step
-        run: "deno task start"
+        run: "deno task dev"
 
       - name: Upload to Deno Deploy
         uses: denoland/deployctl@v1
@@ -33,4 +33,4 @@ jobs:
           entrypoint: "main.ts"
           root: ""
           
-          exclude: .env
+          
