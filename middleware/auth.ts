@@ -1,6 +1,27 @@
 import { getSupabaseClient } from '../utils/supabase.ts';
 
-export const authMiddleware = async (c: any, next: any) => {
+interface Employee {
+  id: string;
+  role: 'owner' | 'admin' | 'seller';
+  is_active: boolean;
+  business_id: string;
+  created_at: string;
+  // Add other properties as needed
+}
+
+type Context = {
+  req: {
+    header: (name: string) => string | undefined;
+    param: (name: string) => string | undefined;
+    query: (name: string) => string | undefined;
+  };
+  set: (key: string, value: unknown) => void;
+  get: (key: string) => unknown;
+  json: (body: unknown, status?: number) => unknown;
+  // Add other properties as needed
+};
+
+export const authMiddleware = async (c: Context, next: () => Promise<void>) => {
 
   const authHeader = c.req.header('Authorization');
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -117,7 +138,7 @@ export const authMiddleware = async (c: any, next: any) => {
 // =============================================================================
 
 // Solo propietarios (owners)
-export const requireOwner = async (c: any, next: any) => {
+export const requireOwner = async (c: Context, next: () => Promise<void>) => {
   const employee = c.get('employee');
   
   if (!employee) {
@@ -127,11 +148,11 @@ export const requireOwner = async (c: any, next: any) => {
     }, 400);
   }
   
-  if (employee.role !== 'owner') {
+  if ((employee as Employee).role !== 'owner') {
     return c.json({ 
       error: 'Solo propietarios pueden realizar esta acción',
       code: 'OWNER_REQUIRED',
-      current_role: employee.role
+      current_role: (employee as Employee).role
     }, 403);
   }
 
@@ -139,7 +160,7 @@ export const requireOwner = async (c: any, next: any) => {
 };
 
 // Administradores o propietarios
-export const requireAdminOrOwner = async (c: any, next: any) => {
+export const requireAdminOrOwner = async (c: Context, next: () => Promise<void>) => {
   const employee = c.get('employee');
   
   if (!employee) {
@@ -149,11 +170,11 @@ export const requireAdminOrOwner = async (c: any, next: any) => {
     }, 400);
   }
   
-  if (!['owner', 'admin'].includes(employee.role)) {
+  if (!['owner', 'admin'].includes((employee as Employee).role)) {
     return c.json({ 
       error: 'Permisos insuficientes. Se requiere rol de administrador o propietario.',
       code: 'INSUFFICIENT_PERMISSIONS',
-      current_role: employee.role,
+      current_role: (employee as Employee).role,
       required_roles: ['owner', 'admin']
     }, 403);
   }
@@ -162,7 +183,7 @@ export const requireAdminOrOwner = async (c: any, next: any) => {
 };
 
 // Cualquier empleado activo (owner, admin, seller)
-export const requireEmployee = async (c: any, next: any) => {
+export const requireEmployee = async (c: Context, next: () => Promise<void>) => {
   const employee = c.get('employee');
   
   if (!employee) {
@@ -181,37 +202,37 @@ export const requireEmployee = async (c: any, next: any) => {
 
 export const Permissions = {
   // Verificar si puede crear pedidos
-  canCreateOrders: (employee: any): boolean => {
+  canCreateOrders: (employee: Employee): boolean => {
     return employee && ['owner', 'admin', 'seller'].includes(employee.role);
   },
 
   // Verificar si puede ver reportes financieros
-  canViewReports: (employee: any): boolean => {
+  canViewReports: (employee: Employee): boolean => {
     return employee && ['owner', 'admin'].includes(employee.role);
   },
 
   // Verificar si puede gestionar empleados
-  canManageEmployees: (employee: any): boolean => {
+  canManageEmployees: (employee: Employee): boolean => {
     return employee && employee.role === 'owner';
   },
 
   // Verificar si puede modificar configuración del negocio
-  canModifySettings: (employee: any): boolean => {
+  canModifySettings: (employee: Employee): boolean => {
     return employee && ['owner', 'admin'].includes(employee.role);
   },
 
   // Verificar si puede eliminar pedidos
-  canDeleteOrders: (employee: any): boolean => {
+  canDeleteOrders: (employee: Employee): boolean => {
     return employee && ['owner', 'admin'].includes(employee.role);
   },
 
   // Verificar si puede ver pedidos de otros empleados
-  canViewAllOrders: (employee: any): boolean => {
+  canViewAllOrders: (employee: Employee): boolean => {
     return employee && ['owner', 'admin'].includes(employee.role);
   },
 
   // Verificar si puede gestionar productos
-  canManageProducts: (employee: any): boolean => {
+  canManageProducts: (employee: Employee): boolean => {
     return employee && ['owner', 'admin'].includes(employee.role);
   }
 };
