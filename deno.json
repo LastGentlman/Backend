@@ -13,7 +13,17 @@
     "dotenv": "https://deno.land/std@0.220.1/dotenv/mod.ts"
   },
   "compilerOptions": {
-    "lib": ["deno.window"],
+    "lib": [
+      "deno.window"
+    ],
     "strict": true
+  },
+  "deploy": {
+    "project": "ef25b810-c0ea-4b38-88c9-5ae56d14ed2d",
+    "exclude": [
+      "**/node_modules"
+    ],
+    "include": [],
+    "entrypoint": "main.ts"
   }
-} 
+}
