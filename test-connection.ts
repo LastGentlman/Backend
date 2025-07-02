@@ -67,7 +67,7 @@ async function testSupabaseConnection() {
 async function testAPIServer() {
   log("\n🌐 Testing API Server...", "blue");
   
-  const baseUrl = "https://near-salmon-61-1f2dh445h30z.deno.dev";
+  const baseUrl = Deno.env.get("BACKEND_URL");
   const endpoints = [
     { name: "Root", path: "/" },
     { name: "Health", path: "/health" },
