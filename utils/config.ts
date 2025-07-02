@@ -88,6 +88,7 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
             "http://localhost:3000", 
             "http://localhost:5173", 
             "https://pedidolist.vercel.app",
+            "https://7f73-2605-59c8-7014-d610-cea7-c4a4-75db-d545.ngrok-free.app",
             "https://staging.pedidolist.vercel.app" // URL de staging
           ]
         },

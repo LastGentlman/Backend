@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '../utils/supabase.ts';
+import { Context } from "hono";
 
 interface Employee {
   id: string;
@@ -9,19 +10,7 @@ interface Employee {
   // Add other properties as needed
 }
 
-type Context = {
-  req: {
-    header: (name: string) => string | undefined;
-    param: (name: string) => string | undefined;
-    query: (name: string) => string | undefined;
-  };
-  set: (key: string, value: unknown) => void;
-  get: (key: string) => unknown;
-  json: (body: unknown, status?: number) => unknown;
-  // Add other properties as needed
-};
-
-export const authMiddleware = async (c: Context, next: () => Promise<void>) => {
+export const authMiddleware = async (c: Context, next: () => Promise<void | Response>): Promise<void | Response> => {
 
   const authHeader = c.req.header('Authorization');
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -122,7 +111,7 @@ export const authMiddleware = async (c: Context, next: () => Promise<void>) => {
       console.log(`✅ Auth success: ${user.email} (Sin negocio)`);
     }
 
-    await next();
+    return await next();
   } catch (error) {
     console.error('❌ Auth middleware error:', error);
     return c.json({ 
