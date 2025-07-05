@@ -115,7 +115,7 @@ export function sanitizeInputMiddleware() {
     
     c.req.json = async () => {
       const data = await originalJson.call(c.req);
-      return sanitizeFormData(data);
+      return sanitizeFormData(data as Record<string, unknown>);
     };
     
     await next();

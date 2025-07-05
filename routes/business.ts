@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { getSupabaseClient } from "../utils/supabase.ts";
 import { requireOwner, requireAdminOrOwner } from "../middleware/auth.ts";
+import { getBusinessFromContext, getEmployeeFromContext } from "../types/context.ts";
 
 const business = new Hono();
 
@@ -8,8 +9,8 @@ const business = new Hono();
 
 // Obtener información del negocio actual
 business.get("/", async (c) => {
-  const business = c.get('business');
-  const employee = c.get('employee');
+  const business = getBusinessFromContext(c);
+  const employee = getEmployeeFromContext(c);
   
   if (!business || !employee) {
     return c.json({ 
