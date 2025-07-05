@@ -6,6 +6,7 @@ import { errorHandler } from "./utils/errorHandler.ts";
 import { requestLogger } from "./utils/logger.ts";
 import { smartRateLimiter } from "./utils/rateLimiter.ts";
 import { getEnvironmentConfig, logEnvironmentConfig, validateEnvironmentVariables } from "./utils/config.ts";
+import { securityHeadersMiddleware } from "./utils/security.ts";
 import testRoutes from "./routes/test.ts";
 import ordersRoutes from "./routes/orders.ts";
 import authRoutes from "./routes/auth.ts";
@@ -48,6 +49,7 @@ const app = new Hono();
 // Global middlewares (se ejecutan en orden)
 app.use("*", requestLogger); // Logging de todas las peticiones
 app.use("*", smartRateLimiter()); // Rate limiting inteligente
+app.use("*", securityHeadersMiddleware()); // Headers de seguridad
 
 // Add CORS middleware with environment-specific origins
 app.use("*", cors({
