@@ -85,10 +85,9 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
         },
         cors: {
           origins: [
-            "http://localhost:3000", 
-            "http://localhost:5173", 
+            "http://localhost:3000",
             "https://pedidolist.vercel.app",
-            "https://7f73-2605-59c8-7014-d610-cea7-c4a4-75db-d545.ngrok-free.app",
+            "http://192.168.1.229:3000",
             "https://staging.pedidolist.vercel.app" // URL de staging
           ]
         },
@@ -119,6 +118,7 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
             "http://localhost:3030", 
             "http://localhost:5173",
             "http://localhost:3000",
+            "http://192.168.1.229:3000",
             "https://pedidolist.vercel.app"
           ]
         },
