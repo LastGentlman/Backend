@@ -1,14 +1,14 @@
 import { Hono } from "hono";
 import { getSupabaseClient } from "../utils/supabase.ts";
 import { requireOwner, requireAdminOrOwner } from "../middleware/auth.ts";
-import { getBusinessFromContext, getEmployeeFromContext } from "../types/context.ts";
+import { getBusinessFromContext, getEmployeeFromContext, getUserFromContext } from "../types/context.ts";
 
 const business = new Hono();
 
 // ===== RUTAS DE NEGOCIOS =====
 
 // Obtener información del negocio actual
-business.get("/", async (c) => {
+business.get("/", (c) => {
   const business = getBusinessFromContext(c);
   const employee = getEmployeeFromContext(c);
   
@@ -38,15 +38,23 @@ business.get("/", async (c) => {
 
 // Actualizar configuración del negocio (solo owner/admin)
 business.patch("/settings", requireAdminOrOwner, async (c) => {
-  const business = c.get('business');
-  const user = c.get('user');
+  const business = getBusinessFromContext(c);
+  const user = getUserFromContext(c);
+  
+  if (!business || !user) {
+    return c.json({ 
+      error: 'Contexto de negocio y usuario requerido',
+      code: 'CONTEXT_REQUIRED'
+    }, 400);
+  }
+  
   const updateData = await c.req.json();
   
   const supabase = getSupabaseClient();
   
   // Solo permitir actualizar campos específicos
   const allowedFields = ['settings', 'name'];
-  const filteredData: any = {};
+  const filteredData: Record<string, unknown> = {};
   
   for (const field of allowedFields) {
     if (updateData[field] !== undefined) {
@@ -82,7 +90,15 @@ business.patch("/settings", requireAdminOrOwner, async (c) => {
 
 // Obtener empleados del negocio (solo owner/admin)
 business.get("/employees", requireAdminOrOwner, async (c) => {
-  const business = c.get('business');
+  const business = getBusinessFromContext(c);
+  
+  if (!business) {
+    return c.json({ 
+      error: 'Contexto de negocio requerido',
+      code: 'BUSINESS_CONTEXT_REQUIRED'
+    }, 400);
+  }
+  
   const supabase = getSupabaseClient();
   
   const { data: employees, error } = await supabase
@@ -114,8 +130,16 @@ business.get("/employees", requireAdminOrOwner, async (c) => {
 
 // Invitar nuevo empleado (solo owner)
 business.post("/employees/invite", requireOwner, async (c) => {
-  const business = c.get('business');
-  const user = c.get('user');
+  const business = getBusinessFromContext(c);
+  const user = getUserFromContext(c);
+  
+  if (!business || !user) {
+    return c.json({ 
+      error: 'Contexto de negocio y usuario requerido',
+      code: 'CONTEXT_REQUIRED'
+    }, 400);
+  }
+  
   const { email, role } = await c.req.json();
   
   if (!email || !role) {
@@ -135,14 +159,15 @@ business.post("/employees/invite", requireOwner, async (c) => {
   const supabase = getSupabaseClient();
   
   // Verificar si el usuario ya existe
-  const { data: existingUser } = await supabase.auth.admin.getUserByEmail(email);
+  const { data: existingUsers } = await supabase.auth.admin.listUsers();
+  const existingUser = existingUsers.users.find(user => user.email === email);
   
-  if (existingUser.user) {
+  if (existingUser) {
     // Usuario existe, verificar si ya es empleado
     const { data: existingEmployee } = await supabase
       .from('employees')
       .select('id')
-      .eq('user_id', existingUser.user.id)
+      .eq('user_id', existingUser.id)
       .eq('business_id', business.id)
       .single();
       
@@ -184,7 +209,15 @@ business.post("/employees/invite", requireOwner, async (c) => {
 
 // Obtener estadísticas del negocio (solo owner/admin)
 business.get("/stats", requireAdminOrOwner, async (c) => {
-  const business = c.get('business');
+  const business = getBusinessFromContext(c);
+  
+  if (!business) {
+    return c.json({ 
+      error: 'Contexto de negocio requerido',
+      code: 'BUSINESS_CONTEXT_REQUIRED'
+    }, 400);
+  }
+  
   const supabase = getSupabaseClient();
   
   const today = new Date().toISOString().split('T')[0];
