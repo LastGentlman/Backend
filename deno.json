@@ -2,7 +2,7 @@
   "tasks": {
     "dev": "deno run --allow-env --allow-net --allow-read --watch main.ts",
     "start": "deno run --allow-net --allow-env main.ts",
-    "test": "deno test"
+    "test": "deno test --allow-env --allow-net --allow-read"
   },
   "imports": {
     "@negrel/webpush": "jsr:@negrel/webpush@^0.5.0",
