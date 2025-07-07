@@ -12,6 +12,8 @@ import ordersRoutes from "./routes/orders.ts";
 import authRoutes from "./routes/auth.ts";
 import businessRoutes from "./routes/business.ts";  // 🆕 Rutas de negocios
 import notificationsRoutes from "./routes/notifications.ts";
+import monitoringRoutes from "./routes/monitoring.ts";
+import whatsappRoutes from "./routes/whatsapp.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 
 // Load environment variables from .env file
@@ -109,6 +111,8 @@ app.route("/api/orders", ordersRoutes);
 app.route("/api/business", businessRoutes);
 app.route("/api/auth", authRoutes); // Auth routes are public (no middleware)
 app.route("/api/notifications", notificationsRoutes);
+app.route("/api/monitoring", monitoringRoutes);
+app.route("/api/whatsapp", whatsappRoutes);
 
 // ===== ERROR HANDLER (debe ir después de las rutas) =====
 app.use("*", errorHandler);
