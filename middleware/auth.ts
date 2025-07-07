@@ -1,5 +1,5 @@
 import { getSupabaseClient } from '../utils/supabase.ts';
-import { Context } from "hono";
+import { Context } from "https://deno.land/x/hono@v3.11.7/mod.ts";
 
 interface Employee {
   id: string;

@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono } from "https://deno.land/x/hono@v3.11.7/mod.ts";
 import { cors } from "hono/cors";
 import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
 import { initializeSupabase } from "./utils/supabase.ts";
@@ -79,7 +79,7 @@ app.get("/health", async (c) => {
     // Verificar conexión a Supabase
     const { getSupabaseClient } = await import("./utils/supabase.ts");
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase.from('profiles').select('count').limit(1);
+    const { data: _data, error } = await supabase.from('profiles').select('count').limit(1);
     
     return c.json({
       status: "healthy",
@@ -106,13 +106,13 @@ app.use("/api/orders/*", authMiddleware);
 // app.use("/api/test/*", authMiddleware); // Comentado para desarrollo
 
 // Add API routes with specific middlewares
-app.route("/api/test", testRoutes);
-app.route("/api/orders", ordersRoutes);
-app.route("/api/business", businessRoutes);
-app.route("/api/auth", authRoutes); // Auth routes are public (no middleware)
-app.route("/api/notifications", notificationsRoutes);
-app.route("/api/monitoring", monitoringRoutes);
-app.route("/api/whatsapp", whatsappRoutes);
+app.use("/api/test/*", async (c) => testRoutes.fetch(c.req.raw));
+app.use("/api/orders/*", async (c) => ordersRoutes.fetch(c.req.raw));
+app.use("/api/business/*", async (c) => businessRoutes.fetch(c.req.raw));
+app.use("/api/auth/*", async (c) => authRoutes.fetch(c.req.raw));
+app.use("/api/notifications/*", async (c) => notificationsRoutes.fetch(c.req.raw));
+app.use("/api/monitoring/*", async (c) => monitoringRoutes.fetch(c.req.raw));
+app.use("/api/whatsapp/*", async (c) => whatsappRoutes.fetch(c.req.raw));
 
 // ===== ERROR HANDLER (debe ir después de las rutas) =====
 app.use("*", errorHandler);

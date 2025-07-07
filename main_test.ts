@@ -1,5 +1,4 @@
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.1/assert/mod.ts";
-import { Hono } from "hono";
 import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
 
 // Load environment variables for testing
@@ -39,7 +38,7 @@ Deno.test("Backend Connection - Supabase Client", async function supabaseTest() 
     const supabase = getSupabaseClient();
     
     // Test basic connection
-    const { data, error } = await supabase.from('profiles').select('count').limit(1);
+    const { data: _data, error } = await supabase.from('profiles').select('count').limit(1);
     
     if (error) {
       console.warn("⚠️ Supabase connection warning:", error.message);

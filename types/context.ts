@@ -22,7 +22,7 @@ export interface UserContext {
   // Otros campos de usuario según Supabase
 }
 
-import { Context } from "hono";
+import { Context } from "https://deno.land/x/hono@v3.11.7/mod.ts";
 
 // Helper functions para acceder al contexto de forma segura
 export function getBusinessFromContext(c: Context): BusinessContext | null {
