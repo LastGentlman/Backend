@@ -100,8 +100,8 @@ app.get("/health", async (c) => {
 // ===== RUTAS PROTEGIDAS =====
 // 🆕 Rutas de API que requieren autenticación (excluyendo auth)
 app.use("/api/orders/*", authMiddleware);
-app.use("/api/business/*", authMiddleware);
-app.use("/api/test/*", authMiddleware);
+// app.use("/api/business/*", authMiddleware); // Comentado para permitir activación de trial
+// app.use("/api/test/*", authMiddleware); // Comentado para desarrollo
 
 // Add API routes with specific middlewares
 app.route("/api/test", testRoutes);

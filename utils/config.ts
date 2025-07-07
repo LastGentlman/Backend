@@ -28,7 +28,8 @@ export function validateEnvironmentVariables(): void {
   const requiredVars = [
     'SUPABASE_URL',
     'SUPABASE_ANON_KEY',
-    'SUPABASE_SERVICE_ROLE_KEY'
+    'SUPABASE_SERVICE_ROLE_KEY',
+    'STRIPE_SECRET_KEY'
   ];
 
   const missingVars = requiredVars.filter(varName => !Deno.env.get(varName));

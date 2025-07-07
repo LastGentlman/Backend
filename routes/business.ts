@@ -2,8 +2,263 @@ import { Hono } from "hono";
 import { getSupabaseClient } from "../utils/supabase.ts";
 import { requireOwner, requireAdminOrOwner } from "../middleware/auth.ts";
 import { getBusinessFromContext, getEmployeeFromContext, getUserFromContext } from "../types/context.ts";
+import { getStripeClient } from "../utils/stripe.ts";
+import { getTaxRegimeByCode, isValidTaxRegime } from "../utils/taxRegimes.ts";
+import type { TrialActivationRequest, TrialActivationResponse } from "../types/business.ts";
 
 const business = new Hono();
+
+// ===== ACTIVACIÓN DE TRIAL =====
+
+// Activar trial gratuito y crear negocio
+business.post("/activate-trial", async (c) => {
+  try {
+    // Obtener usuario del token
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Token de autorización requerido" }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const { getUserFromToken } = await import("../utils/supabase.ts");
+    const user = await getUserFromToken(token);
+    
+    if (!user) {
+      return c.json({ error: "Usuario no encontrado" }, 401);
+    }
+
+    // Obtener datos del request
+    const requestData: TrialActivationRequest = await c.req.json();
+    
+    // Validar datos requeridos
+    if (!requestData.businessName || !requestData.businessEmail || !requestData.billingName) {
+      return c.json({ 
+        error: "Datos requeridos: businessName, businessEmail, billingName" 
+      }, 400);
+    }
+
+    // Validar régimen fiscal
+    if (!requestData.taxRegime || !isValidTaxRegime(requestData.taxRegime)) {
+      return c.json({ 
+        error: "Régimen fiscal inválido o no especificado",
+        validRegimes: ["605", "606", "612", "621", "626", "601", "614", "623", "999"]
+      }, 400);
+    }
+
+    const taxRegime = getTaxRegimeByCode(requestData.taxRegime);
+    if (!taxRegime) {
+      return c.json({ 
+        error: "Régimen fiscal no encontrado" 
+      }, 400);
+    }
+
+    const supabase = getSupabaseClient();
+    const stripe = getStripeClient();
+
+    // 1. Crear o obtener cliente en Stripe
+    const stripeCustomer = await stripe.createOrGetCustomer(
+      requestData.businessEmail,
+      requestData.billingName,
+      {
+        userId: user.id,
+        businessName: requestData.businessName,
+        taxId: requestData.taxId || '',
+      }
+    );
+
+    // 2. Procesar método de pago si se proporciona
+    let paymentMethodId: string | undefined;
+    if (requestData.paymentMethod) {
+      try {
+        const paymentMethod = await stripe.createPaymentMethod(
+          requestData.paymentMethod.type,
+          requestData.paymentMethod.card
+        );
+        
+        await stripe.attachPaymentMethodToCustomer(paymentMethod.id, stripeCustomer.id);
+        paymentMethodId = paymentMethod.id;
+      } catch (error) {
+        console.error('Error processing payment method:', error);
+        // No fallar si el método de pago falla (trial puede continuar)
+      }
+    }
+
+    // 3. Crear suscripción con trial de 7 días
+    // Nota: Necesitas crear un Price en Stripe primero
+    const priceId = Deno.env.get('STRIPE_PRICE_ID') || 'price_default';
+    
+    const subscription = await stripe.createSubscriptionWithTrial(
+      stripeCustomer.id,
+      priceId,
+      7, // 7 días de trial
+      paymentMethodId
+    );
+
+    // 4. Crear negocio en la base de datos
+    const { data: business, error: businessError } = await supabase
+      .from('businesses')
+      .insert({
+        name: requestData.businessName,
+        owner_id: user.id,
+        email: requestData.businessEmail,
+        phone: requestData.businessPhone,
+        address: requestData.businessAddress,
+        stripe_customer_id: stripeCustomer.id,
+        stripe_subscription_id: subscription.id,
+        subscription_status: 'trial',
+        trial_ends_at: new Date(subscription.trial_end! * 1000).toISOString(),
+        settings: {
+          currency: requestData.currency,
+          taxRegime: {
+            code: taxRegime.code,
+            name: taxRegime.name,
+            type: taxRegime.type
+          },
+          notifications: {
+            email: true,
+            push: true
+          },
+          timezone: 'America/Mexico_City'
+        },
+        billing_info: {
+          name: requestData.billingName,
+          taxId: requestData.taxId,
+          address: requestData.billingAddress
+        }
+      })
+      .select()
+      .single();
+
+    if (businessError) {
+      console.error('Error creating business:', businessError);
+      return c.json({ 
+        error: 'Error al crear el negocio',
+        details: businessError.message 
+      }, 500);
+    }
+
+    // 5. Crear empleado (owner) asociado al negocio
+    const { error: employeeError } = await supabase
+      .from('employees')
+      .insert({
+        user_id: user.id,
+        business_id: business.id,
+        role: 'owner',
+        is_active: true
+      });
+
+    if (employeeError) {
+      console.error('Error creating employee:', employeeError);
+      // No fallar si ya existe
+    }
+
+    // 6. Crear sucursal por defecto
+    const { error: branchError } = await supabase
+      .from('branches')
+      .insert({
+        business_id: business.id,
+        name: 'Sucursal Principal',
+        address: requestData.businessAddress || 'Dirección por definir',
+        phone: requestData.businessPhone,
+        is_active: true
+      });
+
+    if (branchError) {
+      console.error('Error creating branch:', branchError);
+      // No fallar si hay error en sucursal
+    }
+
+    // 7. Actualizar perfil del usuario con businessId
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ 
+        current_business_id: business.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', user.id);
+
+    if (profileError) {
+      console.error('Error updating user profile:', profileError);
+    }
+
+    const response: TrialActivationResponse = {
+      success: true,
+      business: {
+        id: business.id,
+        name: business.name,
+        stripeCustomerId: stripeCustomer.id,
+        stripeSubscriptionId: subscription.id,
+        trialEndsAt: new Date(subscription.trial_end! * 1000).toISOString(),
+        currency: requestData.currency,
+        taxRegime: {
+          code: taxRegime.code,
+          name: taxRegime.name,
+          type: taxRegime.type
+        }
+      },
+      subscription: {
+        id: subscription.id,
+        status: subscription.status,
+        trialEnd: subscription.trial_end!,
+        currentPeriodEnd: subscription.current_period_end
+      }
+    };
+
+    return c.json(response);
+
+  } catch (error) {
+    console.error('Error in trial activation:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    return c.json({ 
+      error: 'Error al activar el trial',
+      details: errorMessage 
+    }, 500);
+  }
+});
+
+// Obtener regímenes fiscales disponibles
+business.get("/tax-regimes", async (c) => {
+  try {
+    const { TAX_REGIMES } = await import("../utils/taxRegimes.ts");
+    
+    return c.json({
+      success: true,
+      taxRegimes: TAX_REGIMES
+    });
+  } catch (error) {
+    console.error('Error fetching tax regimes:', error);
+    return c.json({ 
+      error: 'Error al obtener regímenes fiscales',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    }, 500);
+  }
+});
+
+// Obtener precios disponibles para suscripciones
+business.get("/prices", async (c) => {
+  try {
+    const stripe = getStripeClient();
+    const prices = await stripe.listPrices(true);
+    
+    return c.json({
+      success: true,
+      prices: prices.data.map((price: any) => ({
+        id: price.id,
+        nickname: price.nickname,
+        unit_amount: price.unit_amount,
+        currency: price.currency,
+        recurring: price.recurring,
+        active: price.active
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching prices:', error);
+    return c.json({ 
+      error: 'Error al obtener precios',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    }, 500);
+  }
+});
 
 // ===== RUTAS DE NEGOCIOS =====
 
