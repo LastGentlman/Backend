@@ -11,6 +11,7 @@ import ordersRoutes from "./routes/orders.ts";
 import businessRoutes from "./routes/business.ts";
 import authRoutes from "./routes/auth.ts";
 import notificationsRoutes from "./routes/notifications.ts";
+import k6Routes from "./routes/k6.ts";
 
 // ===== LOAD ENVIRONMENT VARIABLES =====
 const env = await load();
@@ -141,6 +142,7 @@ app.get("/health", async (c) => {
 
 // ===== RUTAS PÚBLICAS (sin autenticación) =====
 app.route("/api/auth", authRoutes);
+app.route("/api/k6", k6Routes);
 
 // ===== MIDDLEWARE DE AUTENTICACIÓN =====
 // ✅ FIJO: Aplicar middleware ANTES de registrar rutas protegidas
