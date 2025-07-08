@@ -270,4 +270,4 @@ Para problemas técnicos:
 
 - Revisar logs del servidor
 - Verificar configuración de Supabase
-- Consultar documentación de k6: [https://k6.io/docs/](https://k6.io/docs/) 
+- Consultar documentación de k6: [https://k6.io/docs/](https://k6.io/docs/)
