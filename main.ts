@@ -1,22 +1,23 @@
-import { Hono } from "https://deno.land/x/hono@v3.11.7/mod.ts";
+import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
 import { initializeSupabase } from "./utils/supabase.ts";
-import { errorHandler } from "./utils/errorHandler.ts";
 import { requestLogger } from "./utils/logger.ts";
 import { smartRateLimiter } from "./utils/rateLimiter.ts";
 import { getEnvironmentConfig, logEnvironmentConfig, validateEnvironmentVariables } from "./utils/config.ts";
 import { securityHeadersMiddleware } from "./utils/security.ts";
+import { authMiddleware } from "./middleware/auth.ts";
+
+// Import routes
 import testRoutes from "./routes/test.ts";
 import ordersRoutes from "./routes/orders.ts";
 import authRoutes from "./routes/auth.ts";
-import businessRoutes from "./routes/business.ts";  // 🆕 Rutas de negocios
+import businessRoutes from "./routes/business.ts";
 import notificationsRoutes from "./routes/notifications.ts";
 import monitoringRoutes from "./routes/monitoring.ts";
 import whatsappRoutes from "./routes/whatsapp.ts";
-import { authMiddleware } from "./middleware/auth.ts";
 
-// Load environment variables from .env file
+// ===== LOAD ENVIRONMENT VARIABLES =====
 const env = await load();
 console.log("✅ Environment variables loaded");
 
@@ -25,18 +26,14 @@ for (const [key, value] of Object.entries(env)) {
   Deno.env.set(key, value);
 }
 
-// Get environment configuration
+// ===== VALIDATION & CONFIGURATION =====
+validateEnvironmentVariables();
 const config = getEnvironmentConfig();
 
-// Validar variables de entorno críticas (siempre, no condicionalmente)
-validateEnvironmentVariables();
-
 console.log(`🌍 Environment: ${config.name}`);
-
-// Log detailed configuration
 logEnvironmentConfig();
 
-// Initialize Supabase client after env vars are loaded
+// ===== INITIALIZE SUPABASE =====
 try {
   initializeSupabase();
   console.log("✅ Supabase client initialized");
@@ -46,21 +43,48 @@ try {
   throw error;
 }
 
+// ===== CREATE HONO APP =====
 const app = new Hono();
 
-// Global middlewares (se ejecutan en orden)
-app.use("*", requestLogger); // Logging de todas las peticiones
-app.use("*", smartRateLimiter()); // Rate limiting inteligente
-app.use("*", securityHeadersMiddleware()); // Headers de seguridad
+// ===== GLOBAL MIDDLEWARES (CRITICAL ORDER) =====
 
-// Add CORS middleware with environment-specific origins
+// 1. Pretty JSON middleware (only in development/staging)
+if (config.name !== 'production') {
+  app.use("*", async (c, next) => {
+    await next();
+    if (c.res.headers.get("content-type")?.includes("application/json")) {
+      const body = await c.res.json();
+      c.res = new Response(JSON.stringify(body, null, 2), {
+        headers: c.res.headers,
+        status: c.res.status,
+      });
+    }
+  });
+  console.log("📝 Pretty JSON enabled for development");
+} else {
+  console.log("📝 Pretty JSON disabled for production (optimized responses)");
+}
+
+// 2. Security headers
+app.use("*", securityHeadersMiddleware());
+
+// 3. Rate limiting
+app.use("*", smartRateLimiter());
+
+// 4. Request logging
+app.use("*", requestLogger);
+
+// 5. CORS with environment-specific origins
 app.use("*", cors({
   origin: config.cors.origins,
-  allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowHeaders: ["Content-Type", "Authorization"],
   credentials: true,
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  exposeHeaders: ['Content-Length'],
+  maxAge: 600, // Cache preflight for 10 minutes
 }));
 
+// ===== ROOT ENDPOINT =====
 app.get("/", (c) => {
   return c.json({ 
     message: "PedidoList API", 
@@ -73,13 +97,14 @@ app.get("/", (c) => {
   });
 });
 
-// Health check endpoint with database connectivity test
+// ===== HEALTH CHECK =====
 app.get("/health", async (c) => {
   try {
-    // Verificar conexión a Supabase
     const { getSupabaseClient } = await import("./utils/supabase.ts");
     const supabase = getSupabaseClient();
-    const { data: _data, error } = await supabase.from('profiles').select('count').limit(1);
+    
+    // Basic connectivity test
+    const { error } = await supabase.from('profiles').select('count').limit(1);
     
     return c.json({
       status: "healthy",
@@ -87,50 +112,119 @@ app.get("/health", async (c) => {
       timestamp: new Date().toISOString(),
       environment: config.name,
       rateLimiting: config.rateLimiting.enabled ? "enabled" : "disabled",
-      security: config.security.strictCORS ? "strict" : "permissive"
+      security: config.security.strictCORS ? "strict" : "permissive",
+      version: "1.0.0"
     });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("❌ Health check failed:", error);
     return c.json({
       status: "error",
-      error: errorMessage,
+      error: error instanceof Error ? error.message : "Unknown error",
       timestamp: new Date().toISOString()
     }, 500);
   }
 });
 
-// ===== RUTAS PROTEGIDAS =====
-// 🆕 Rutas de API que requieren autenticación (excluyendo auth)
+// ===== PUBLIC ROUTES (no authentication required) =====
+app.route("/api/auth", authRoutes);
+
+// ===== AUTHENTICATION MIDDLEWARE =====
+// Apply middleware BEFORE registering protected routes
 app.use("/api/orders/*", authMiddleware);
-// app.use("/api/business/*", authMiddleware); // Comentado para permitir activación de trial
-// app.use("/api/test/*", authMiddleware); // Comentado para desarrollo
+app.use("/api/business/*", authMiddleware);
+app.use("/api/test/*", authMiddleware);
+app.use("/api/notifications/*", authMiddleware);
+app.use("/api/monitoring/*", authMiddleware);
+app.use("/api/whatsapp/*", authMiddleware);
 
-// Add API routes with specific middlewares
-app.use("/api/test/*", async (c) => testRoutes.fetch(c.req.raw));
-app.use("/api/orders/*", async (c) => ordersRoutes.fetch(c.req.raw));
-app.use("/api/business/*", async (c) => businessRoutes.fetch(c.req.raw));
-app.use("/api/auth/*", async (c) => authRoutes.fetch(c.req.raw));
-app.use("/api/notifications/*", async (c) => notificationsRoutes.fetch(c.req.raw));
-app.use("/api/monitoring/*", async (c) => monitoringRoutes.fetch(c.req.raw));
-app.use("/api/whatsapp/*", async (c) => whatsappRoutes.fetch(c.req.raw));
+// ===== PROTECTED ROUTES (require authentication) =====
+app.route("/api/test", testRoutes);
+app.route("/api/orders", ordersRoutes);
+app.route("/api/business", businessRoutes);
+app.route("/api/notifications", notificationsRoutes);
+app.route("/api/monitoring", monitoringRoutes);
+app.route("/api/whatsapp", whatsappRoutes);
 
-// ===== ERROR HANDLER (debe ir después de las rutas) =====
-app.use("*", errorHandler);
-
-// ===== MANEJO DE RUTAS NO ENCONTRADAS =====
+// ===== 404 HANDLER =====
 app.notFound((c) => {
+  console.log(`❌ 404: ${c.req.method} ${c.req.path}`);
   return c.json({ 
     error: "Endpoint no encontrado",
     path: c.req.path,
     method: c.req.method,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    availableEndpoints: [
+      "GET /health",
+      "POST /api/auth/login",
+      "POST /api/auth/register", 
+      "GET /api/orders",
+      "POST /api/orders",
+      "GET /api/business",
+      "POST /api/notifications/subscribe",
+      "GET /api/test/test-connection"
+    ]
   }, 404);
 });
 
-// Get port from environment variable or default to 3030
+// ===== GLOBAL ERROR HANDLER (must be LAST) =====
+app.onError((error, c) => {
+  console.error("🚨 Unhandled error:", error);
+  
+  // Detailed error logging
+  const user = c.get('user') as Record<string, unknown> | undefined;
+  const context = c.get('context') as Record<string, unknown> | undefined;
+  const business = context?.business as Record<string, unknown> | undefined;
+  
+  const errorLog = {
+    message: error instanceof Error ? error.message : 'Unknown error',
+    stack: error instanceof Error ? error.stack : undefined,
+    path: c.req.path,
+    method: c.req.method,
+    timestamp: new Date().toISOString(),
+    userId: user?.id,
+    businessId: business?.id
+  };
+
+  if (config.logging.detailed) {
+    console.error('📋 Error details:', JSON.stringify(errorLog, null, 2));
+  }
+
+  // Determine error status and message
+  let status = 500;
+  let message = "Error interno del servidor";
+  let code = 'INTERNAL_SERVER_ERROR';
+
+  if (error && typeof error === 'object') {
+    const appError = error as unknown as Record<string, unknown>;
+    
+    if (appError.status && typeof appError.status === 'number') {
+      status = appError.status;
+    }
+    
+    if (appError.message && typeof appError.message === 'string') {
+      message = appError.message;
+    }
+    
+    if (appError.code && typeof appError.code === 'string') {
+      code = appError.code;
+    }
+  }
+  
+  return c.json({
+    error: message,
+    code,
+    timestamp: new Date().toISOString(),
+    // Only include stack trace in development
+    ...(config.name === 'development' && { stack: error instanceof Error ? error.stack : undefined })
+  }, status);
+});
+
+// ===== SERVER CONFIGURATION =====
 const port = parseInt(Deno.env.get("PORT") || "3030");
 
-// Start the server
 console.log(`🚀 PedidoList API starting on http://localhost:${port}`);
-console.log(`🔒 Security: Auth middleware enabled`);
+console.log(`📖 Health check: http://localhost:${port}/health`);
+console.log(`🔒 Security: Auth middleware enabled for protected routes`);
+console.log(`🌍 CORS origins: ${config.cors.origins.join(', ')}`);
+
 Deno.serve({ port }, app.fetch); 

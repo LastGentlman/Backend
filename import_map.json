@@ -1,6 +1,13 @@
 {
   "imports": {
-    "hono": "https://deno.land/x/hono@v3.12.0/",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.0"
+    "hono/": "https://deno.land/x/hono@v3.12.0/",
+    "hono": "https://deno.land/x/hono@v3.12.0/mod.ts",
+    "hono/cors": "https://deno.land/x/hono@v3.12.0/middleware/cors/index.ts",
+    "hono/factory": "https://deno.land/x/hono@v3.12.0/factory/index.ts",
+    "hono/middleware.ts": "https://deno.land/x/hono@v3.12.0/middleware.ts",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.3",
+    "@negrel/webpush": "jsr:@negrel/webpush@^0.5.0",
+    "dotenv": "https://deno.land/std@0.220.1/dotenv/mod.ts",
+    "json-stringify-pretty-compact": "https://esm.sh/v135/json-stringify-pretty-compact@3.0.0"
   }
 } 
