@@ -13,7 +13,7 @@ Este directorio contiene scripts de carga (load tests) para validar el rendimien
 
 ### 2. **Monitoring** (`monitoring_load.ts`)
 
-- **Endpoints:** 
+- **Endpoints:**
   - `POST /api/monitoring/check`
   - `GET /api/monitoring/alerts`
   - `POST /api/monitoring/test-alert`
