@@ -1,21 +1,16 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
+import { validateEnvironmentVariables, getEnvironmentConfig } from "./utils/config.ts";
 import { initializeSupabase } from "./utils/supabase.ts";
-import { requestLogger } from "./utils/logger.ts";
-import { smartRateLimiter } from "./utils/rateLimiter.ts";
-import { getEnvironmentConfig, logEnvironmentConfig, validateEnvironmentVariables } from "./utils/config.ts";
-import { securityHeadersMiddleware } from "./utils/security.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 
-// Import routes
+// Importar rutas
 import testRoutes from "./routes/test.ts";
 import ordersRoutes from "./routes/orders.ts";
-import authRoutes from "./routes/auth.ts";
 import businessRoutes from "./routes/business.ts";
+import authRoutes from "./routes/auth.ts";
 import notificationsRoutes from "./routes/notifications.ts";
-import monitoringRoutes from "./routes/monitoring.ts";
-import whatsappRoutes from "./routes/whatsapp.ts";
 
 // ===== LOAD ENVIRONMENT VARIABLES =====
 const env = await load();
@@ -26,12 +21,9 @@ for (const [key, value] of Object.entries(env)) {
   Deno.env.set(key, value);
 }
 
-// ===== VALIDATION & CONFIGURATION =====
+// ===== VALIDACIÓN INICIAL =====
 validateEnvironmentVariables();
 const config = getEnvironmentConfig();
-
-console.log(`🌍 Environment: ${config.name}`);
-logEnvironmentConfig();
 
 // ===== INITIALIZE SUPABASE =====
 try {
@@ -43,67 +35,89 @@ try {
   throw error;
 }
 
-// ===== CREATE HONO APP =====
+// ===== INICIALIZACIÓN DE LA APP =====
+const isDev = config.name === 'development';
+const logPrefix = isDev ? '🚀' : 'STARTUP:';
+console.log(`${logPrefix} Iniciando PedidoList API en modo: ${config.name}`);
+console.log(`${isDev ? '🔒' : 'SECURITY:'} Seguridad CORS: ${config.security.strictCORS ? 'estricta' : 'permisiva'}`);
+console.log(`${isDev ? '📊' : 'CONFIG:'} Rate limiting: ${config.rateLimiting.enabled ? 'habilitado' : 'deshabilitado'}`);
+
 const app = new Hono();
 
-// ===== GLOBAL MIDDLEWARES (CRITICAL ORDER) =====
+// ===== MIDDLEWARES GLOBALES (ORDEN CRÍTICO) =====
 
-// 1. Pretty JSON middleware (only in development/staging)
+// 1. Pretty JSON middleware (solo en desarrollo)
 if (config.name !== 'production') {
   app.use("*", async (c, next) => {
     await next();
-    if (c.res.headers.get("content-type")?.includes("application/json")) {
-      const body = await c.res.json();
-      c.res = new Response(JSON.stringify(body, null, 2), {
-        headers: c.res.headers,
-        status: c.res.status,
-      });
+    // Solo para respuestas exitosas y JSON
+    if (
+      c.res &&
+      c.res.headers.get("content-type")?.includes("application/json") &&
+      c.res.status < 400
+    ) {
+      try {
+        const body = await c.res.json();
+        c.res = new Response(JSON.stringify(body, null, 2), {
+          headers: c.res.headers,
+          status: c.res.status,
+        });
+      } catch {
+        // Ignorar si no es JSON parseable
+      }
     }
   });
-  console.log("📝 Pretty JSON enabled for development");
+  console.log(`${isDev ? '📝' : 'JSON:'} Pretty JSON enabled for development`);
 } else {
-  console.log("📝 Pretty JSON disabled for production (optimized responses)");
+  console.log(`${isDev ? '📝' : 'JSON:'} Pretty JSON disabled for production (optimized responses)`);
 }
 
-// 2. Security headers
-app.use("*", securityHeadersMiddleware());
-
-// 3. Rate limiting
-app.use("*", smartRateLimiter());
-
-// 4. Request logging
-app.use("*", requestLogger);
-
-// 5. CORS with environment-specific origins
+// 2. CORS configurado correctamente por ambiente
 app.use("*", cors({
-  origin: config.cors.origins,
+  origin: config.cors.origins, // ✅ FIJO: Orígenes específicos por ambiente
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   exposeHeaders: ['Content-Length'],
-  maxAge: 600, // Cache preflight for 10 minutes
+  maxAge: 600, // Cache preflight por 10 minutos
 }));
 
-// ===== ROOT ENDPOINT =====
-app.get("/", (c) => {
-  return c.json({ 
-    message: "PedidoList API", 
-    version: "1.0.0",
-    status: "running",
-    environment: config.name,
-    rateLimiting: config.rateLimiting.enabled ? "enabled" : "disabled",
-    debugMode: config.features.debugMode,
-    security: config.security.strictCORS ? "strict" : "permissive"
-  });
+// 3. Logging middleware personalizado
+app.use("*", async (c, next) => {
+  const start = Date.now();
+  const method = c.req.method;
+  const path = c.req.path;
+  
+  // Solo loggear en desarrollo y staging
+  if (config.logging.detailed) {
+    const emoji = isDev ? '➡️' : '';
+    console.log(`${emoji} ${method} ${path}`);
+  }
+  
+  await next();
+  
+  const duration = Date.now() - start;
+  const status = c.res.status;
+  
+  // Color coding para status
+  const statusEmoji = isDev ? (status >= 400 ? '🔴' : status >= 300 ? '🟡' : '🟢') : '';
+  const statusText = status >= 400 ? 'ERROR' : status >= 300 ? 'REDIRECT' : 'SUCCESS';
+  
+  if (config.logging.detailed) {
+    const logMessage = isDev 
+      ? `⬅️ ${statusEmoji} ${status} ${method} ${path} - ${duration}ms`
+      : `${statusText} ${status} ${method} ${path} - ${duration}ms`;
+    console.log(logMessage);
+  }
 });
 
-// ===== HEALTH CHECK =====
+// ===== HEALTH CHECK (antes de rutas protegidas) =====
 app.get("/health", async (c) => {
   try {
     const { getSupabaseClient } = await import("./utils/supabase.ts");
     const supabase = getSupabaseClient();
     
-    // Basic connectivity test
+    // Test básico de conectividad
     const { error } = await supabase.from('profiles').select('count').limit(1);
     
     return c.json({
@@ -125,29 +139,26 @@ app.get("/health", async (c) => {
   }
 });
 
-// ===== PUBLIC ROUTES (no authentication required) =====
+// ===== RUTAS PÚBLICAS (sin autenticación) =====
 app.route("/api/auth", authRoutes);
 
-// ===== AUTHENTICATION MIDDLEWARE =====
-// Apply middleware BEFORE registering protected routes
+// ===== MIDDLEWARE DE AUTENTICACIÓN =====
+// ✅ FIJO: Aplicar middleware ANTES de registrar rutas protegidas
 app.use("/api/orders/*", authMiddleware);
 app.use("/api/business/*", authMiddleware);
 app.use("/api/test/*", authMiddleware);
 app.use("/api/notifications/*", authMiddleware);
-app.use("/api/monitoring/*", authMiddleware);
-app.use("/api/whatsapp/*", authMiddleware);
 
-// ===== PROTECTED ROUTES (require authentication) =====
+// ===== RUTAS PROTEGIDAS (requieren autenticación) =====
 app.route("/api/test", testRoutes);
 app.route("/api/orders", ordersRoutes);
 app.route("/api/business", businessRoutes);
 app.route("/api/notifications", notificationsRoutes);
-app.route("/api/monitoring", monitoringRoutes);
-app.route("/api/whatsapp", whatsappRoutes);
 
-// ===== 404 HANDLER =====
+// ===== MANEJO DE RUTAS NO ENCONTRADAS =====
 app.notFound((c) => {
-  console.log(`❌ 404: ${c.req.method} ${c.req.path}`);
+  const logMessage = isDev ? `❌ 404: ${c.req.method} ${c.req.path}` : `404: ${c.req.method} ${c.req.path}`;
+  console.log(logMessage);
   return c.json({ 
     error: "Endpoint no encontrado",
     path: c.req.path,
@@ -160,17 +171,18 @@ app.notFound((c) => {
       "GET /api/orders",
       "POST /api/orders",
       "GET /api/business",
-      "POST /api/notifications/subscribe",
-      "GET /api/test/test-connection"
+      "POST /api/notifications/subscribe"
     ]
   }, 404);
 });
 
-// ===== GLOBAL ERROR HANDLER (must be LAST) =====
+// ===== ERROR HANDLER GLOBAL (debe ir AL FINAL) =====
+// ✅ FIJO: Mover error handler al final para capturar todos los errores
 app.onError((error, c) => {
-  console.error("🚨 Unhandled error:", error);
+  const errorPrefix = isDev ? '🚨' : 'ERROR:';
+  console.error(`${errorPrefix} Unhandled error:`, error);
   
-  // Detailed error logging
+  // Log detallado del error
   const user = c.get('user') as Record<string, unknown> | undefined;
   const context = c.get('context') as Record<string, unknown> | undefined;
   const business = context?.business as Record<string, unknown> | undefined;
@@ -186,45 +198,45 @@ app.onError((error, c) => {
   };
 
   if (config.logging.detailed) {
-    console.error('📋 Error details:', JSON.stringify(errorLog, null, 2));
+    const detailPrefix = isDev ? '📋' : 'DETAILS:';
+    console.error(`${detailPrefix} Error details:`, JSON.stringify(errorLog, null, 2));
   }
 
-  // Determine error status and message
+  // Determinar status y mensaje del error
   let status = 500;
   let message = "Error interno del servidor";
   let code = 'INTERNAL_SERVER_ERROR';
 
-  if (error && typeof error === 'object') {
-    const appError = error as unknown as Record<string, unknown>;
-    
-    if (appError.status && typeof appError.status === 'number') {
-      status = appError.status;
-    }
-    
-    if (appError.message && typeof appError.message === 'string') {
-      message = appError.message;
-    }
-    
-    if (appError.code && typeof appError.code === 'string') {
-      code = appError.code;
-    }
+  type AppError = { status?: number; message?: string; code?: string };
+  const appError = error as AppError;
+  
+  if (appError.status && typeof appError.status === 'number') {
+    status = appError.status;
+  }
+  
+  if (appError.message && typeof appError.message === 'string') {
+    message = appError.message;
+  }
+  
+  if (appError.code && typeof appError.code === 'string') {
+    code = appError.code;
   }
   
   return c.json({
     error: message,
     code,
     timestamp: new Date().toISOString(),
-    // Only include stack trace in development
+    // Solo incluir stack trace en desarrollo
     ...(config.name === 'development' && { stack: error instanceof Error ? error.stack : undefined })
   }, status);
 });
 
-// ===== SERVER CONFIGURATION =====
+// ===== CONFIGURACIÓN DEL SERVIDOR =====
 const port = parseInt(Deno.env.get("PORT") || "3030");
 
-console.log(`🚀 PedidoList API starting on http://localhost:${port}`);
-console.log(`📖 Health check: http://localhost:${port}/health`);
-console.log(`🔒 Security: Auth middleware enabled for protected routes`);
-console.log(`🌍 CORS origins: ${config.cors.origins.join(', ')}`);
+console.log(`${isDev ? '🚀' : 'SERVER:'} PedidoList API running on http://localhost:${port}`);
+console.log(`${isDev ? '📖' : 'HEALTH:'} Health check: http://localhost:${port}/health`);
+console.log(`${isDev ? '🔒' : 'AUTH:'} Security: Auth middleware enabled for protected routes`);
+console.log(`${isDev ? '🌍' : 'CORS:'} CORS origins: ${config.cors.origins.join(', ')}`);
 
 Deno.serve({ port }, app.fetch); 

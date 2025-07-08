@@ -8,11 +8,11 @@ export interface EnvironmentConfig {
     windowMs: number;
   };
   logging: {
-    level: '🔍🐛' | 'ℹ️' | '⚠️' | '‼️ Error 🚨';
+    level: 'debug' | 'info' | 'warn' | 'error';
     detailed: boolean;
   };
   cors: {
-    origins: string[];
+    origins: string[]; // ✅ FIJO: Array de strings específicos
   };
   features: {
     debugMode: boolean;
@@ -28,8 +28,7 @@ export function validateEnvironmentVariables(): void {
   const requiredVars = [
     'SUPABASE_URL',
     'SUPABASE_ANON_KEY',
-    'SUPABASE_SERVICE_ROLE_KEY',
-    'STRIPE_SECRET_KEY'
+    'SUPABASE_SERVICE_ROLE_KEY'
   ];
 
   const missingVars = requiredVars.filter(varName => !Deno.env.get(varName));
@@ -56,10 +55,11 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
           windowMs: 60 * 1000
         },
         logging: {
-          level: "⚠️",
+          level: "warn",
           detailed: false
         },
         cors: {
+          // ✅ FIJO: Solo dominios específicos en producción
           origins: [
             "https://pedidolist.vercel.app",
             "https://www.pedidolist.com"
@@ -84,10 +84,11 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
           windowMs: 60 * 1000
         },
         logging: {
-          level: "ℹ️",
+          level: "info",
           detailed: true
         },
         cors: {
+          // ✅ Staging permite más orígenes para testing
           origins: [
             "http://localhost:3000", 
             "http://localhost:5173", 
@@ -109,24 +110,22 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
       return {
         name: "development",
         rateLimiting: {
-          enabled: false,
+          enabled: false, // ✅ Deshabilitado en desarrollo
           defaultRequests: 1000,
           authRequests: 100,
           windowMs: 60 * 1000
         },
         logging: {
-          level: "🔍🐛",
+          level: "debug",
           detailed: true
         },
         cors: {
+          // ✅ Desarrollo permite localhost
           origins: [
             "http://localhost:3000",
             "http://localhost:5173",
-            "http://localhost:3030",
             "http://127.0.0.1:3000",
-            "http://127.0.0.1:5173",
-            "http://192.168.1.229:3000",
-            "https://pedidolist.vercel.app"
+            "http://127.0.0.1:5173"
           ]
         },
         features: {
@@ -134,7 +133,7 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
           testEndpoints: true
         },
         security: {
-          strictCORS: false
+          strictCORS: false // ✅ Más permisivo en desarrollo
         }
       };
   }
@@ -154,7 +153,7 @@ export const logEnvironmentConfig = () => {
     console.log(`     - Default: ${config.rateLimiting.defaultRequests} req/min`);
     console.log(`     - Auth: ${config.rateLimiting.authRequests} req/min`);
   }
-  console.log(`   Logging Level: ${config.logging.level}`);
+  console.log(`   Logging Level: ${config.logging.level.toUpperCase()}`);
   console.log(`   Debug Mode: ${config.features.debugMode ? '✅' : '❌'}`);
   console.log(`   Test Endpoints: ${config.features.testEndpoints ? '✅' : '❌'}`);
   console.log(`   CORS Origins: ${config.cors.origins.length} configured`);
