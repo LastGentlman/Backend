@@ -467,7 +467,7 @@ export class WhatsAppAlertsService {
 
 ⏰ *Timestamp:* ${timestamp}
 
-🔗 Dashboard: https://app.pedidolist.com/admin/metrics
+🔗 Dashboard: https://app.ingroy.com/admin/metrics
 
 ⚡ *REQUIERE ATENCIÓN INMEDIATA*`;
   }
@@ -494,7 +494,7 @@ export class WhatsAppAlertsService {
 
 ⏰ *Timestamp:* ${timestamp}
 
-🔗 Dashboard: https://app.pedidolist.com/admin/metrics
+🔗 Dashboard: https://app.ingroy.com/admin/metrics
 
 📋 *Revisar cuando sea posible*`;
   }
@@ -699,7 +699,7 @@ export class WhatsAppAlertsService {
 
 ⏰ Última verificación: ${new Date().toLocaleString('es-MX')}
 
-🔗 Dashboard: https://app.pedidolist.com/admin/metrics`;
+🔗 Dashboard: https://app.ingroy.com/admin/metrics`;
     
     await this.sendMessage(phoneNumber, message, 'report');
   }
@@ -741,7 +741,7 @@ Para pausar, envía "pause" o "pausar".`;
 • resume/reanudar - Reanudar alertas
 • help/ayuda - Mostrar esta ayuda
 
-🔗 Dashboard: https://app.pedidolist.com/admin/metrics`;
+🔗 Dashboard: https://app.ingroy.com/admin/metrics`;
     
     await this.sendMessage(phoneNumber, message, 'report');
   }
