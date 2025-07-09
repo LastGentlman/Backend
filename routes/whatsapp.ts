@@ -1,6 +1,7 @@
-import { Hono } from "hono";
+import { Hono } from "hono/mod.ts";
 
-import { WhatsAppAlertsService } from "../services/WhatsAppAlertsService.ts";
+import { WhatsAppAlertsService, WhatsAppTemplates } from "../services/WhatsAppAlertsService.ts";
+import { getSupabaseClient } from "../utils/supabase.ts";
 
 const whatsapp = new Hono();
 
@@ -56,6 +57,335 @@ whatsapp.post("/webhook", async (c) => {
   }
 });
 
+// ===== NUEVOS ENDPOINTS PARA INTEGRACIÓN DE NEGOCIO =====
+
+/**
+ * Enviar mensaje de WhatsApp (endpoint general)
+ */
+whatsapp.post("/send-message", async (c) => {
+  try {
+    const { to, message, businessId, priority = 'business' } = await c.req.json();
+    
+    const result = await WhatsAppAlertsService.sendMessage(to, message, priority);
+    
+    // Guardar log del mensaje enviado
+    if (businessId) {
+      const supabase = getSupabaseClient();
+      await supabase.from("whatsapp_logs").insert({
+        business_id: businessId,
+        phone_number: to,
+        message_type: "outbound",
+        content: message,
+        status: result ? "sent" : "failed",
+        priority: priority,
+        created_at: new Date().toISOString()
+      });
+    }
+    
+    return c.json({ 
+      success: result, 
+      message: result ? "Mensaje enviado" : "Error enviando mensaje" 
+    });
+    
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    }, 500);
+  }
+});
+
+/**
+ * Enviar confirmación de pedido al cliente
+ */
+whatsapp.post("/send-order-confirmation", async (c) => {
+  try {
+    const { orderId } = await c.req.json();
+    
+    const success = await WhatsAppAlertsService.sendOrderConfirmation(orderId);
+    
+    return c.json({ 
+      success, 
+      message: success ? "Confirmación enviada" : "Error enviando confirmación" 
+    });
+    
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    }, 500);
+  }
+});
+
+/**
+ * Enviar notificación de pedido listo
+ */
+whatsapp.post("/send-order-ready", async (c) => {
+  try {
+    const { orderId } = await c.req.json();
+    
+    const success = await WhatsAppAlertsService.sendOrderReadyNotification(orderId);
+    
+    return c.json({ 
+      success, 
+      message: success ? "Notificación enviada" : "Error enviando notificación" 
+    });
+    
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    }, 500);
+  }
+});
+
+/**
+ * Disparar alerta de nuevo pedido
+ */
+whatsapp.post("/trigger-new-order-alert", async (c) => {
+  try {
+    const { orderId } = await c.req.json();
+    
+    await WhatsAppAlertsService.triggerNewOrderAlert(orderId);
+    
+    return c.json({ 
+      success: true, 
+      message: "Alerta de nuevo pedido disparada" 
+    });
+    
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    }, 500);
+  }
+});
+
+/**
+ * Verificar pedidos retrasados
+ */
+whatsapp.post("/check-delayed-orders", async (c) => {
+  try {
+    await WhatsAppAlertsService.checkDelayedOrders();
+    
+    return c.json({ 
+      success: true, 
+      message: "Verificación de pedidos retrasados completada" 
+    });
+    
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    }, 500);
+  }
+});
+
+// ===== GESTIÓN DE REGLAS DE ALERTA =====
+
+/**
+ * Obtener reglas de alerta de un negocio
+ */
+whatsapp.get("/alert-rules/:businessId", async (c) => {
+  try {
+    const businessId = c.req.param("businessId");
+    const supabase = getSupabaseClient();
+    
+    const { data: rules, error } = await supabase
+      .from("alert_rules")
+      .select("*")
+      .eq("business_id", businessId)
+      .order("created_at", { ascending: false });
+    
+    if (error) throw error;
+    
+    return c.json({ 
+      success: true, 
+      rules: rules || [] 
+    });
+    
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    }, 500);
+  }
+});
+
+/**
+ * Crear nueva regla de alerta
+ */
+whatsapp.post("/alert-rules", async (c) => {
+  try {
+    const { business_id, event_type, conditions, actions, is_active = true } = await c.req.json();
+    
+    const supabase = getSupabaseClient();
+    
+    const { data: rule, error } = await supabase
+      .from("alert_rules")
+      .insert({
+        business_id,
+        event_type,
+        conditions,
+        actions,
+        is_active,
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    return c.json({ 
+      success: true, 
+      rule,
+      message: "Regla de alerta creada" 
+    });
+    
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    }, 500);
+  }
+});
+
+/**
+ * Actualizar regla de alerta
+ */
+whatsapp.put("/alert-rules/:ruleId", async (c) => {
+  try {
+    const ruleId = c.req.param("ruleId");
+    const updates = await c.req.json();
+    
+    const supabase = getSupabaseClient();
+    
+    const { data: rule, error } = await supabase
+      .from("alert_rules")
+      .update(updates)
+      .eq("id", ruleId)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    return c.json({ 
+      success: true, 
+      rule,
+      message: "Regla de alerta actualizada" 
+    });
+    
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    }, 500);
+  }
+});
+
+/**
+ * Eliminar regla de alerta
+ */
+whatsapp.delete("/alert-rules/:ruleId", async (c) => {
+  try {
+    const ruleId = c.req.param("ruleId");
+    const supabase = getSupabaseClient();
+    
+    const { error } = await supabase
+      .from("alert_rules")
+      .delete()
+      .eq("id", ruleId);
+    
+    if (error) throw error;
+    
+    return c.json({ 
+      success: true, 
+      message: "Regla de alerta eliminada" 
+    });
+    
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    }, 500);
+  }
+});
+
+// ===== ANALYTICS Y REPORTES =====
+
+/**
+ * Obtener analytics de WhatsApp para un negocio
+ */
+whatsapp.get("/analytics/:businessId", async (c) => {
+  try {
+    const businessId = c.req.param("businessId");
+    const period = c.req.query("period") || "week";
+    
+    const analytics = await WhatsAppAlertsService.getWhatsAppAnalytics(businessId, period);
+    
+    return c.json({ 
+      success: true, 
+      analytics 
+    });
+    
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    }, 500);
+  }
+});
+
+/**
+ * Obtener logs de WhatsApp de un negocio
+ */
+whatsapp.get("/logs/:businessId", async (c) => {
+  try {
+    const businessId = c.req.param("businessId");
+    const limit = parseInt(c.req.query("limit") || "50");
+    const offset = parseInt(c.req.query("offset") || "0");
+    
+    const supabase = getSupabaseClient();
+    
+    const { data: logs, error } = await supabase
+      .from("whatsapp_logs")
+      .select("*")
+      .eq("business_id", businessId)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+    
+    if (error) throw error;
+    
+    return c.json({ 
+      success: true, 
+      logs: logs || [],
+      pagination: {
+        limit,
+        offset,
+        hasMore: (logs || []).length === limit
+      }
+    });
+    
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    }, 500);
+  }
+});
+
+// ===== TEMPLATES Y CONFIGURACIÓN =====
+
+/**
+ * Obtener templates disponibles
+ */
+whatsapp.get("/templates", (c) => {
+  return c.json({ 
+    success: true, 
+    templates: WhatsAppTemplates 
+  });
+});
+
 /**
  * Endpoint para enviar alerta manual (útil para testing)
  */
@@ -109,6 +439,8 @@ whatsapp.post("/configure-alerts", async (c) => {
   }
 });
 
+// ===== MÉTODOS PRIVADOS (MANTENIDOS) =====
+
 /**
  * Verifica la firma del webhook para seguridad
  */
@@ -141,23 +473,23 @@ async function verifySignature(body: string, signature?: string): Promise<boolea
 /**
  * Procesa mensajes entrantes de WhatsApp
  */
-async function processIncomingMessage(messageData: any): Promise<void> {
+async function processIncomingMessage(messageData: Record<string, unknown>): Promise<void> {
   try {
     const messages = messageData.messages || [];
     
-    for (const message of messages) {
+    for (const message of messages as Record<string, unknown>[]) {
       const fromNumber = message.from;
       const messageType = message.type;
       
       // Solo procesar mensajes de texto
       if (messageType === "text") {
-        const messageText = message.text.body;
+        const messageText = (message.text as { body: string }).body;
         
         console.log(`📱 Mensaje recibido de ${fromNumber}: ${messageText}`);
         
         // Manejar comandos
         await WhatsAppAlertsService.handleIncomingMessage(
-          fromNumber, 
+          fromNumber as string, 
           messageText
         );
       }

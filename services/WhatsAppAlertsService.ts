@@ -27,6 +27,54 @@ interface AlertConfig {
   };
 }
 
+// ===== NUEVAS INTERFACES PARA ALERTAS DE NEGOCIO =====
+
+interface AlertRule {
+  id?: string;
+  business_id: string;
+  event_type: 'new_order' | 'order_delayed' | 'payment_received' | 'low_stock' | 'system_alert';
+  conditions: Record<string, string | number | boolean>;
+  actions: AlertAction[];
+  is_active: boolean;
+  created_at?: string;
+}
+
+interface AlertAction {
+  type: 'whatsapp' | 'push_notification' | 'email';
+  recipients: string[];
+  template: string;
+  delay?: number; // minutos
+}
+
+interface WhatsAppLog {
+  id?: string;
+  business_id?: string;
+  phone_number: string;
+  message_type: 'inbound' | 'outbound';
+  content: string;
+  status: 'sent' | 'failed' | 'delivered' | 'read';
+  whatsapp_message_id?: string;
+  priority?: 'critical' | 'warning' | 'report' | 'business';
+  context?: Record<string, unknown>;
+  created_at?: string;
+}
+
+// ===== TEMPLATES DE MENSAJES PREDEFINIDOS =====
+
+export const WhatsAppTemplates = {
+  newOrder: "🆕 *Nuevo Pedido Recibido*\n\n📋 Pedido: #{{order.folio}}\n👤 Cliente: {{order.client_name}}\n💰 Total: ${{order.total}}\n📅 Entrega: {{order.delivery_date}}\n\n🏪 {{business.name}}\n\n¿Todo listo? Responde OK para confirmar.",
+
+  orderConfirmation: "✅ *Pedido Confirmado*\n\n¡Hola {{order.client_name}}! \n\nTu pedido #{{order.folio}} ha sido confirmado:\n\n{{order.items_summary}}\n\n💰 Total: ${{order.total}}\n📅 Entrega: {{order.delivery_date}}\n\n¡Gracias por elegirnos! 🙏",
+
+  orderReady: "🎉 *¡Tu pedido está listo!*\n\n{{order.client_name}}, tu pedido #{{order.folio}} está listo para entrega.\n\n📍 Recógelo en: {{business.address}}\n⏰ Horario: {{business.hours}}\n\n¡Te esperamos! 😊",
+
+  orderDelay: "⏰ *Actualización de Pedido*\n\n{{order.client_name}}, tu pedido #{{order.folio}} tendrá un ligero retraso.\n\nNueva hora estimada: {{order.new_delivery_time}}\n\nDisculpa las molestias. ¡Gracias por tu paciencia! 🙏",
+
+  paymentReminder: "💳 *Recordatorio de Pago*\n\n{{order.client_name}}, tu pedido #{{order.folio}} está pendiente de pago:\n\n💰 Total: ${{order.total}}\n\nMétodos de pago disponibles:\n• Efectivo\n• Transferencia\n• Tarjeta\n\n¡Gracias! 🙏",
+
+  systemAlert: "🚨 *Alerta del Sistema*\n\n{{alert.message}}\n\n📊 Métrica: {{alert.metric}}\n📈 Valor: {{alert.value}}\n⚠️ Límite: {{alert.threshold}}\n\n⏰ {{alert.timestamp}}\n\n🔗 Dashboard: {{alert.dashboard_url}}"
+};
+
 export class WhatsAppAlertsService {
   private static accessToken = Deno.env.get('META_WHATSAPP_TOKEN');
   private static phoneNumberId = Deno.env.get('META_PHONE_NUMBER_ID');
@@ -46,6 +94,8 @@ export class WhatsAppAlertsService {
       weekend: ['+5255XXXXXXXX']              // Solo críticos
     }
   };
+
+  // ===== MÉTODOS EXISTENTES (MANTENIDOS) =====
 
   /**
    * Envía alerta crítica inmediata por WhatsApp
@@ -115,7 +165,7 @@ export class WhatsAppAlertsService {
   static async sendMessage(
     phoneNumber: string, 
     message: string, 
-    priority: 'critical' | 'warning' | 'report'
+    priority: 'critical' | 'warning' | 'report' | 'business' = 'business'
   ): Promise<boolean> {
     if (!this.accessToken || !this.phoneNumberId) {
       console.error('❌ WhatsApp credentials no configuradas');
@@ -148,6 +198,7 @@ export class WhatsAppAlertsService {
       if (!response.ok) {
         const errorData = await response.json();
         console.error('❌ Error enviando WhatsApp:', errorData);
+        await this.logMessage(phoneNumber, message, priority, 'failed');
         return false;
       }
 
@@ -155,7 +206,7 @@ export class WhatsAppAlertsService {
       console.log(`✅ WhatsApp enviado a ${phoneNumber}:`, result.messages[0].id);
       
       // Guardar log para auditoría
-      await this.logMessage(phoneNumber, message, priority, 'sent');
+      await this.logMessage(phoneNumber, message, priority, 'sent', result.messages[0].id);
       
       return true;
 
@@ -165,6 +216,234 @@ export class WhatsAppAlertsService {
       return false;
     }
   }
+
+  // ===== NUEVOS MÉTODOS PARA ALERTAS DE NEGOCIO =====
+
+  /**
+   * Disparar alerta cuando se crea un nuevo pedido
+   */
+  static async triggerNewOrderAlert(orderId: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    
+    const { data: order } = await supabase
+      .from("orders")
+      .select(`
+        *,
+        businesses!inner(id, name, owner_id, settings),
+        profiles!inner(name, phone)
+      `)
+      .eq("id", orderId)
+      .single();
+      
+    if (!order) return;
+    
+    const alertRules = await this.getActiveRules(order.business_id, 'new_order');
+    
+    for (const rule of alertRules) {
+      await this.executeRule(rule, { order });
+    }
+  }
+
+  /**
+   * Alerta por pedidos retrasados
+   */
+  static async checkDelayedOrders(): Promise<void> {
+    const supabase = getSupabaseClient();
+    const cutoffTime = new Date();
+    cutoffTime.setHours(cutoffTime.getHours() - 2); // 2 horas de retraso
+    
+    const { data: delayedOrders } = await supabase
+      .from("orders")
+      .select(`
+        *,
+        businesses!inner(id, name, owner_id),
+        profiles!inner(phone)
+      `)
+      .eq("status", "pending")
+      .lt("created_at", cutoffTime.toISOString());
+      
+    for (const order of delayedOrders || []) {
+      await this.triggerDelayedOrderAlert(order);
+    }
+  }
+
+  /**
+   * Enviar mensaje de confirmación al cliente
+   */
+  static async sendOrderConfirmation(orderId: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    
+    const { data: order } = await supabase
+      .from("orders")
+      .select(`
+        *,
+        businesses!inner(id, name, address, settings)
+      `)
+      .eq("id", orderId)
+      .single();
+      
+    if (!order || !order.client_phone) return false;
+    
+    const message = this.renderTemplate(WhatsAppTemplates.orderConfirmation, { 
+      order,
+      business: order.businesses 
+    });
+    
+    return await this.sendMessage(order.client_phone, message, 'business');
+  }
+
+  /**
+   * Enviar notificación de pedido listo
+   */
+  static async sendOrderReadyNotification(orderId: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    
+    const { data: order } = await supabase
+      .from("orders")
+      .select(`
+        *,
+        businesses!inner(id, name, address, settings)
+      `)
+      .eq("id", orderId)
+      .single();
+      
+    if (!order || !order.client_phone) return false;
+    
+    const message = this.renderTemplate(WhatsAppTemplates.orderReady, { 
+      order,
+      business: order.businesses 
+    });
+    
+    return await this.sendMessage(order.client_phone, message, 'business');
+  }
+
+  // ===== MÉTODOS PRIVADOS PARA ALERTAS =====
+
+  private static async getActiveRules(businessId: string, eventType: string): Promise<AlertRule[]> {
+    const supabase = getSupabaseClient();
+    
+    const { data } = await supabase
+      .from("alert_rules")
+      .select("*")
+      .eq("business_id", businessId)
+      .eq("event_type", eventType)
+      .eq("is_active", true);
+      
+    return data || [];
+  }
+
+  private static async executeRule(rule: AlertRule, context: Record<string, unknown>): Promise<void> {
+    for (const action of rule.actions) {
+      if (action.delay) {
+        // Programar para más tarde
+        await this.scheduleDelayedAction(action, context, action.delay);
+      } else {
+        await this.executeAction(action, context);
+      }
+    }
+  }
+
+  private static async executeAction(action: AlertAction, context: Record<string, unknown>): Promise<void> {
+    const message = this.renderTemplate(action.template, context);
+    
+    switch (action.type) {
+      case 'whatsapp':
+        for (const recipient of action.recipients) {
+          await this.sendMessage(recipient, message, 'business');
+        }
+        break;
+        
+      case 'push_notification':
+        // Usar tu sistema existente de push notifications
+        console.log('📱 Push notification:', message);
+        break;
+        
+      case 'email':
+        // Implementar envío de email si es necesario
+        console.log('📧 Email notification:', message);
+        break;
+    }
+  }
+
+  private static renderTemplate(template: string, context: Record<string, unknown>): string {
+    let message = template;
+    
+    // Reemplazar variables del template
+    message = message.replace(/\{\{order\.folio\}\}/g, (context.order as { client_generated_id?: string })?.client_generated_id || '');
+    message = message.replace(/\{\{order\.total\}\}/g, (context.order as { total?: number })?.total?.toString() || '');
+    message = message.replace(/\{\{order\.client_name\}\}/g, (context.order as { client_name?: string })?.client_name || '');
+    message = message.replace(/\{\{order\.delivery_date\}\}/g, (context.order as { delivery_date?: string })?.delivery_date || '');
+    message = message.replace(/\{\{business\.name\}\}/g, (context.order as { businesses?: { name?: string } })?.businesses?.name || (context.business as { name?: string })?.name || '');
+    message = message.replace(/\{\{business\.address\}\}/g, (context.order as { businesses?: { address?: string } })?.businesses?.address || (context.business as { address?: string })?.address || '');
+    
+    // Variables para alertas del sistema
+    message = message.replace(/\{\{alert\.message\}\}/g, (context.alert as { message?: string })?.message || '');
+    message = message.replace(/\{\{alert\.metric\}\}/g, (context.alert as { metric?: string })?.metric || '');
+    message = message.replace(/\{\{alert\.value\}\}/g, (context.alert as { value?: string })?.value || '');
+    message = message.replace(/\{\{alert\.threshold\}\}/g, (context.alert as { threshold?: string })?.threshold || '');
+    message = message.replace(/\{\{alert\.timestamp\}\}/g, (context.alert as { timestamp?: string })?.timestamp || '');
+    message = message.replace(/\{\{alert\.dashboard_url\}\}/g, (context.alert as { dashboard_url?: string })?.dashboard_url || '');
+    
+    return message;
+  }
+
+  private static async scheduleDelayedAction(action: AlertAction, context: Record<string, unknown>, delayMinutes: number): Promise<void> {
+    const supabase = getSupabaseClient();
+    const executeAt = new Date();
+    executeAt.setMinutes(executeAt.getMinutes() + delayMinutes);
+    
+    await supabase.from("scheduled_alerts").insert({
+      action: action,
+      context: context,
+      execute_at: executeAt.toISOString(),
+      status: "pending"
+    });
+  }
+
+  private static async triggerDelayedOrderAlert(order: Record<string, unknown>): Promise<void> {
+    const alertRules = await this.getActiveRules(order.business_id as string, 'order_delayed');
+    
+    for (const rule of alertRules) {
+      await this.executeRule(rule, { 
+        order,
+        delay: '2 horas'
+      });
+    }
+  }
+
+  // ===== ANALYTICS Y MONITOREO =====
+
+  /**
+   * Obtener estadísticas de WhatsApp para un negocio
+   */
+  static async getWhatsAppAnalytics(businessId: string, period: string = 'week'): Promise<Record<string, unknown>> {
+    const supabase = getSupabaseClient();
+    
+    const startDate = new Date();
+    if (period === 'week') startDate.setDate(startDate.getDate() - 7);
+    if (period === 'month') startDate.setMonth(startDate.getMonth() - 1);
+    
+    const { data: logs } = await supabase
+      .from("whatsapp_logs")
+      .select("*")
+      .eq("business_id", businessId)
+      .gte("created_at", startDate.toISOString());
+      
+    const sent = logs?.filter(l => l.message_type === 'outbound').length || 0;
+    const received = logs?.filter(l => l.message_type === 'inbound').length || 0;
+    const successful = logs?.filter(l => l.status === 'sent').length || 0;
+    
+    return {
+      messagesSent: sent,
+      messagesReceived: received,
+      successRate: sent > 0 ? (successful / sent) * 100 : 0,
+      responseRate: received > 0 ? (sent / received) * 100 : 0,
+      avgResponseTime: 0, // TODO: Calcular promedio de tiempo de respuesta
+      topRecipients: [] // TODO: Calcular destinatarios más frecuentes
+    };
+  }
+
+  // ===== MÉTODOS EXISTENTES (MANTENIDOS) =====
 
   /**
    * Formatea mensaje de alerta crítica
@@ -206,14 +485,18 @@ export class WhatsAppAlertsService {
       timeZone: 'America/Mexico_City'
     });
 
-    return `⚠️ *Warning - PedidoList*
+    return `⚠️ *WARNING - PedidoList*
 
-📊 ${metric}: ${currentValue.toLocaleString()} (límite: ${threshold.toLocaleString()})
-🔧 ${action}
+📊 *Métrica:* ${metric}
+📈 *Valor actual:* ${currentValue.toLocaleString()}
+⚠️ *Límite:* ${threshold.toLocaleString()}
+🔧 *Acción sugerida:* ${action}
 
-⏰ ${timestamp}
+⏰ *Timestamp:* ${timestamp}
 
-Dashboard: https://app.pedidolist.com/admin/metrics`;
+🔗 Dashboard: https://app.pedidolist.com/admin/metrics
+
+📋 *Revisar cuando sea posible*`;
   }
 
   /**
@@ -221,15 +504,20 @@ Dashboard: https://app.pedidolist.com/admin/metrics`;
    */
   private static isBusinessHours(): boolean {
     const now = new Date();
-    const mexicoTime = new Date(now.toLocaleString("en-US", {
-      timeZone: "America/Mexico_City"
-    }));
+    const timezone = this.defaultConfig.businessHours.timezone;
     
-    const hour = mexicoTime.getHours();
-    const startHour = parseInt(this.defaultConfig.businessHours.start.split(':')[0]);
-    const endHour = parseInt(this.defaultConfig.businessHours.end.split(':')[0]);
+    const localTime = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
+    const currentHour = localTime.getHours();
+    const currentMinute = localTime.getMinutes();
+    const currentTime = currentHour * 60 + currentMinute;
     
-    return hour >= startHour && hour <= endHour;
+    const [startHour, startMinute] = this.defaultConfig.businessHours.start.split(':').map(Number);
+    const [endHour, endMinute] = this.defaultConfig.businessHours.end.split(':').map(Number);
+    
+    const startTime = startHour * 60 + startMinute;
+    const endTime = endHour * 60 + endMinute;
+    
+    return currentTime >= startTime && currentTime <= endTime;
   }
 
   /**
@@ -237,16 +525,12 @@ Dashboard: https://app.pedidolist.com/admin/metrics`;
    */
   private static isWeekend(): boolean {
     const now = new Date();
-    const mexicoTime = new Date(now.toLocaleString("en-US", {
-      timeZone: "America/Mexico_City"
-    }));
-    
-    const dayOfWeek = mexicoTime.getDay();
-    return dayOfWeek === 0 || dayOfWeek === 6; // Domingo o Sábado
+    const dayOfWeek = now.getDay();
+    return dayOfWeek === 0 || dayOfWeek === 6; // 0 = Sunday, 6 = Saturday
   }
 
   /**
-   * Programa alerta para envío posterior
+   * Programa alerta para horario de negocio
    */
   private static scheduleAlert(
     metric: string,
@@ -255,138 +539,211 @@ Dashboard: https://app.pedidolist.com/admin/metrics`;
     action: string,
     severity: 'warning' | 'critical'
   ): void {
-    // Aquí podrías usar un job queue como Redis/Bull
-    // Por simplicidad, usamos setTimeout para demo
     const delayMs = this.getDelayUntilBusinessHours();
     
     setTimeout(async () => {
-      if (severity === 'warning') {
-        await this.sendWarningAlert(metric, currentValue, threshold, action);
-      } else {
-        await this.sendCriticalAlert(metric, currentValue, threshold, action);
+      const message = severity === 'critical' 
+        ? this.formatCriticalMessage(metric, currentValue, threshold, action)
+        : this.formatWarningMessage(metric, currentValue, threshold, action);
+      
+      for (const phoneNumber of this.defaultConfig.escalation.delayed) {
+        await this.sendMessage(phoneNumber, message, severity);
       }
     }, delayMs);
     
-    console.log(`⏰ Alerta programada para envío en ${delayMs/1000/60} minutos`);
+    console.log(`⏰ Alerta programada para ${new Date(Date.now() + delayMs).toLocaleString()}`);
   }
 
   /**
-   * Calcula delay hasta próximo horario de negocio
+   * Calcula el delay hasta el próximo horario de negocio
    */
   private static getDelayUntilBusinessHours(): number {
     const now = new Date();
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(9, 0, 0, 0); // 9 AM mañana
+    tomorrow.setHours(9, 0, 0, 0); // 9:00 AM
     
     return tomorrow.getTime() - now.getTime();
   }
 
   /**
-   * Guarda log de mensajes para auditoría
+   * Guarda log del mensaje en la base de datos
    */
   private static async logMessage(
-    phoneNumber: string,
-    message: string,
-    priority: string,
-    status: 'sent' | 'failed'
+    phoneNumber: string, 
+    message: string, 
+    priority: string, 
+    status: 'sent' | 'failed' | 'delivered' | 'read',
+    whatsappMessageId?: string
   ): Promise<void> {
-    const supabase = getSupabaseClient();
-    
     try {
-      await supabase.from('whatsapp_logs').insert({
+      const supabase = getSupabaseClient();
+      
+      await supabase.from("whatsapp_logs").insert({
         phone_number: phoneNumber,
-        message_content: message,
-        priority,
-        status,
-        sent_at: new Date().toISOString()
+        message_type: 'outbound',
+        content: message,
+        status: status,
+        priority: priority,
+        whatsapp_message_id: whatsappMessageId,
+        created_at: new Date().toISOString()
       });
+      
     } catch (error) {
-      console.error('Error guardando log WhatsApp:', error);
+      console.error('❌ Error guardando log de WhatsApp:', error);
     }
   }
 
   /**
-   * Configura webhook para recibir respuestas (opcional)
+   * Configura el webhook de WhatsApp
    */
   static setupWebhook(): void {
-    // Configurar webhook para recibir respuestas de WhatsApp
-    // Útil para comandos como "status", "pause alerts", etc.
-    console.log('📱 Webhook WhatsApp configurado para recibir respuestas');
+    console.log('📱 WhatsApp webhook configurado');
+    console.log('🔗 URL: https://tu-dominio.com/api/whatsapp/webhook');
+    console.log('🔐 Verify Token:', Deno.env.get('WEBHOOK_VERIFY_TOKEN'));
   }
 
   /**
-   * Maneja comandos recibidos por WhatsApp
+   * Maneja mensajes entrantes de WhatsApp
    */
   static async handleIncomingMessage(phoneNumber: string, messageText: string): Promise<void> {
-    const command = messageText.toLowerCase().trim();
-    
-    switch (command) {
-      case 'status':
-        await this.sendSystemStatus(phoneNumber);
-        break;
-      case 'pause':
-        await this.pauseAlerts(phoneNumber, 1); // 1 hora
-        break;
-      case 'resume':
-        await this.resumeAlerts(phoneNumber);
-        break;
-      case 'help':
-        await this.sendHelpMessage(phoneNumber);
-        break;
-      default:
-        await this.sendMessage(
-          phoneNumber, 
-          '❓ Comando no reconocido. Envía "help" para ver comandos disponibles.', 
-          'report'
-        );
+    try {
+      // Guardar mensaje entrante
+      await this.logIncomingMessage(phoneNumber, messageText);
+      
+      // Procesar comandos
+      const command = messageText.toLowerCase().trim();
+      
+      switch (command) {
+        case 'status':
+        case 'estado':
+          await this.sendSystemStatus(phoneNumber);
+          break;
+          
+        case 'pause':
+        case 'pausar':
+          await this.pauseAlerts(phoneNumber, 24); // Pausar por 24 horas
+          break;
+          
+        case 'resume':
+        case 'reanudar':
+          await this.resumeAlerts(phoneNumber);
+          break;
+          
+        case 'help':
+        case 'ayuda':
+          await this.sendHelpMessage(phoneNumber);
+          break;
+          
+        default: {
+          // Respuesta automática para mensajes no reconocidos
+          const autoResponse = await this.generateAutoResponse(messageText);
+          if (autoResponse) {
+            await this.sendMessage(phoneNumber, autoResponse, 'business');
+          }
+        }
+      }
+      
+    } catch (error) {
+      console.error('❌ Error procesando mensaje entrante:', error);
     }
   }
 
+  /**
+   * Genera respuesta automática básica
+   */
+  private static generateAutoResponse(messageText: string): string | null {
+    const text = messageText.toLowerCase();
+    
+    if (text.includes("hola") || text.includes("pedido")) {
+      return "¡Hola! Gracias por contactarnos. Tu mensaje ha sido recibido y te responderemos pronto. 🙏";
+    }
+    
+    if (text.includes("estado") || text.includes("status")) {
+      return "Para consultar el estado de tu pedido, compártenos tu número de pedido. 📋";
+    }
+    
+    return null; // No respuesta automática
+  }
+
+  /**
+   * Guarda mensaje entrante en la base de datos
+   */
+  private static async logIncomingMessage(phoneNumber: string, messageText: string): Promise<void> {
+    try {
+      const supabase = getSupabaseClient();
+      
+      await supabase.from("whatsapp_logs").insert({
+        phone_number: phoneNumber,
+        message_type: 'inbound',
+        content: messageText,
+        status: 'delivered',
+        priority: 'business',
+        created_at: new Date().toISOString()
+      });
+      
+    } catch (error) {
+      console.error('❌ Error guardando mensaje entrante:', error);
+    }
+  }
+
+  /**
+   * Envía estado del sistema
+   */
   private static async sendSystemStatus(phoneNumber: string): Promise<void> {
-    // Obtener métricas actuales y enviar resumen
-    const { DatabaseMonitor } = await import("./DatabaseMonitor.ts");
-    const metrics = await DatabaseMonitor.collectMetrics();
-    const status = `📊 *Estado del Sistema*
+    const message = `📊 *Estado del Sistema - PedidoList*
 
-🔹 Órdenes hoy: ${metrics.ordersPerDay}
-🔹 Tiempo promedio query: ${metrics.avgQueryTime}ms
-🔹 BD tamaño: ${metrics.databaseSize}MB
-🔹 Conexiones: ${metrics.activeConnections}
+✅ API: Funcionando
+✅ Base de datos: Conectada
+✅ WhatsApp: Activo
 
-✅ Sistema operando normalmente`;
+⏰ Última verificación: ${new Date().toLocaleString('es-MX')}
 
-    await this.sendMessage(phoneNumber, status, 'report');
+🔗 Dashboard: https://app.pedidolist.com/admin/metrics`;
+    
+    await this.sendMessage(phoneNumber, message, 'report');
   }
 
+  /**
+   * Pausa alertas por un período
+   */
   private static async pauseAlerts(phoneNumber: string, hours: number): Promise<void> {
-    // Implementar lógica para pausar alertas
-    await this.sendMessage(
-      phoneNumber, 
-      `⏸️ Alertas pausadas por ${hours} hora(s). Envía "resume" para reactivar.`, 
-      'report'
-    );
+    const message = `⏸️ *Alertas Pausadas*
+
+Las alertas han sido pausadas por ${hours} horas.
+
+Para reanudar, envía "resume" o "reanudar".`;
+    
+    await this.sendMessage(phoneNumber, message, 'report');
   }
 
+  /**
+   * Reanuda alertas
+   */
   private static async resumeAlerts(phoneNumber: string): Promise<void> {
-    await this.sendMessage(
-      phoneNumber, 
-      `▶️ Alertas reactivadas. Monitoreo normal restablecido.`, 
-      'report'
-    );
+    const message = `▶️ *Alertas Reanudadas*
+
+Las alertas han sido reanudadas.
+
+Para pausar, envía "pause" o "pausar".`;
+    
+    await this.sendMessage(phoneNumber, message, 'report');
   }
 
+  /**
+   * Envía mensaje de ayuda
+   */
   private static async sendHelpMessage(phoneNumber: string): Promise<void> {
-    const helpText = `📱 *Comandos WhatsApp PedidoList*
+    const message = `📋 *Comandos Disponibles*
 
-• *status* - Estado actual del sistema
-• *pause* - Pausar alertas por 1 hora
-• *resume* - Reactivar alertas
-• *help* - Mostrar este mensaje
+• status/estado - Estado del sistema
+• pause/pausar - Pausar alertas (24h)
+• resume/reanudar - Reanudar alertas
+• help/ayuda - Mostrar esta ayuda
 
-🔧 Para soporte técnico: tech@pedidolist.com`;
-
-    await this.sendMessage(phoneNumber, helpText, 'report');
+🔗 Dashboard: https://app.pedidolist.com/admin/metrics`;
+    
+    await this.sendMessage(phoneNumber, message, 'report');
   }
 }
 

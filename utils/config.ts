@@ -61,7 +61,6 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
         cors: {
           // ✅ FIJO: Solo dominios específicos en producción
           origins: [
-            "https://pedidolist.vercel.app",
             "https://www.pedidolist.com"
           ]
         },
@@ -91,10 +90,8 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
           // ✅ Staging permite más orígenes para testing
           origins: [
             "http://localhost:3000", 
-            "http://localhost:5173", 
-            "https://pedidolist.vercel.app",
-            "https://staging.pedidolist.vercel.app",
-            "https://preview.pedidolist.vercel.app"
+            "http://localhost:5173",
+            "https://www.pedidolist.com"
           ]
         },
         features: {
@@ -125,7 +122,8 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
             "http://localhost:3000",
             "http://localhost:5173",
             "http://127.0.0.1:3000",
-            "http://127.0.0.1:5173"
+            "http://127.0.0.1:5173",
+            "https://www.pedidolist.com"
           ]
         },
         features: {

@@ -11,6 +11,7 @@ import ordersRoutes from "./routes/orders.ts";
 import businessRoutes from "./routes/business.ts";
 import authRoutes from "./routes/auth.ts";
 import notificationsRoutes from "./routes/notifications.ts";
+import whatsappRoutes from "./routes/whatsapp.ts";
 import k6Routes from "./routes/k6.ts";
 
 // ===== LOAD ENVIRONMENT VARIABLES =====
@@ -142,6 +143,7 @@ app.get("/health", async (c) => {
 
 // ===== RUTAS PÚBLICAS (sin autenticación) =====
 app.route("/api/auth", authRoutes);
+app.route("/api/whatsapp", whatsappRoutes);
 app.route("/api/k6", k6Routes);
 
 // ===== MIDDLEWARE DE AUTENTICACIÓN =====
