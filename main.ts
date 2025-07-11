@@ -15,16 +15,40 @@ import whatsappRoutes from "./routes/whatsapp.ts";
 import k6Routes from "./routes/k6.ts";
 
 // ===== LOAD ENVIRONMENT VARIABLES =====
-const env = await load();
-console.log("✅ Environment variables loaded");
-
-// Set environment variables for Deno
-for (const [key, value] of Object.entries(env)) {
-  Deno.env.set(key, value);
+// Load .env file if it exists (for local development)
+try {
+  await load({ export: true });
+} catch {
+  // .env file doesn't exist, that's okay
 }
 
+// Add at the top of your main.ts
+export const CONFIG = {
+  SUPABASE_URL: Deno.env.get("SUPABASE_URL"),
+  SUPABASE_ANON_KEY: Deno.env.get("SUPABASE_ANON_KEY"),
+  SUPABASE_SERVICE_ROLE_KEY: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+  IS_PRODUCTION: Deno.env.get("DENO_DEPLOYMENT_ID") !== undefined,
+  PORT: parseInt(Deno.env.get("PORT") || "8000"),
+};
+
+// Validate production environment
+if (CONFIG.IS_PRODUCTION) {
+  const required = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
+  const missing = required.filter(key => !CONFIG[key as keyof typeof CONFIG]);
+  
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+  }
+}
+
+console.log("✅ Environment variables loaded");
+
 // ===== VALIDACIÓN INICIAL =====
-validateEnvironmentVariables();
+// Only validate environment variables in development (not in deployment)
+if (!CONFIG.IS_PRODUCTION) {
+  validateEnvironmentVariables();
+}
+
 const config = getEnvironmentConfig();
 
 // ===== INITIALIZE SUPABASE =====
@@ -236,7 +260,7 @@ app.onError((error, c) => {
 });
 
 // ===== CONFIGURACIÓN DEL SERVIDOR =====
-const port = parseInt(Deno.env.get("PORT") || "3030");
+const port = CONFIG.PORT;
 
 console.log(`${isDev ? '🚀' : 'SERVER:'} PedidoList API running on http://localhost:${port}`);
 console.log(`${isDev ? '📖' : 'HEALTH:'} Health check: http://localhost:${port}/health`);
