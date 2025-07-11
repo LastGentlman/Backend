@@ -2,7 +2,8 @@
   "tasks": {
     "dev": "deno run --allow-env --allow-net --allow-read --watch main.ts",
     "start": "deno run --allow-net --allow-env main.ts",
-    "test": "deno test --allow-env --allow-net --allow-read"
+    "test": "deno test --allow-env --allow-net --allow-read",
+    "build": "deno cache main.ts"
   },
 
   "compilerOptions": {
