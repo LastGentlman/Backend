@@ -448,8 +448,8 @@ export function useWhatsApp(businessId: string) {
 Para soporte técnico:
 
 - Email: <info@ingroy.com>
-- Documentación: [docs.pedidolist.com](https://docs.pedidolist.com)
-- GitHub Issues: [github.com/pedidolist/issues](https://github.com/pedidolist/issues)
+<!--  - Documentación: [docs.pedidolist.com](https://docs.pedidolist.com)
+- GitHub Issues: [github.com/pedidolist/issues](https://github.com/pedidolist/issues)  -->
 
 ---
 
