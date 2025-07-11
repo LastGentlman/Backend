@@ -36,6 +36,6 @@ jobs:
       - name: Upload to Deno Deploy
         uses: denoland/deployctl@v1
         with:
-          project: "pedidolist-backend" # 👈 CAMBIA ESTO por tu nombre de proyecto
+          project: "api.pedidolist.com"
           entrypoint: "main.ts"
           root: ""
