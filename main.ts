@@ -15,6 +15,7 @@ import authRoutes from "./routes/auth.ts";
 import notificationsRoutes from "./routes/notifications.ts";
 import whatsappRoutes from "./routes/whatsapp.ts";
 import k6Routes from "./routes/k6.ts";
+import monitoringRoutes from "./routes/monitoring.ts";
 
 // ===== LOAD ENVIRONMENT VARIABLES =====
 // Load .env file if it exists (for local development)
@@ -134,7 +135,7 @@ app.use("*", async (c, next) => {
 });
 
 // 4. Middleware de headers de seguridad
-app.use("*", securityHeadersMiddleware());
+app.use("*", securityHeadersMiddleware(CONFIG.IS_PRODUCTION));
 
 // 5. Middleware CSRF para rutas de API
 app.use("/api/*", csrfProtection());
@@ -171,6 +172,7 @@ app.get("/health", async (c) => {
 app.route("/api/auth", authRoutes);
 app.route("/api/whatsapp", whatsappRoutes);
 app.route("/api/k6", k6Routes);
+app.route("/api/monitoring", monitoringRoutes);
 
 // ===== MIDDLEWARE DE AUTENTICACIÓN =====
 // ✅ FIJO: Aplicar middleware ANTES de registrar rutas protegidas

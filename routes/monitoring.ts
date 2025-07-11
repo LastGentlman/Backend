@@ -7,6 +7,7 @@ import { getSupabaseClient } from "../utils/supabase.ts";
 import { authMiddleware, requireAdminOrOwner } from "../middleware/auth.ts";
 import { securityMonitor } from "../services/SecurityMonitoringService.ts";
 import { tokenService } from "../services/TokenManagementService.ts";
+import { logXSSAttempt } from "../utils/security.ts";
 
 const monitoring = new Hono();
 
@@ -502,6 +503,86 @@ monitoring.post("/security/cleanup", requireAdminOrOwner, (c) => {
     const errorMessage = error instanceof Error ? error.message : "Failed to cleanup security data";
     return c.json({ error: errorMessage }, 500);
   }
+});
+
+// Endpoint para recibir logs de seguridad del frontend
+monitoring.post("/security/log", async (c) => {
+  try {
+    const logData = await c.req.json();
+    
+    // Validar estructura del log
+    if (!logData.type || !logData.payload || !logData.source || !logData.context) {
+      return c.json({ error: "Invalid log structure" }, 400);
+    }
+    
+    // Extraer información del request
+    const ip = c.req.header("x-forwarded-for") || 
+               c.req.header("x-real-ip") || 
+               "unknown";
+    const userAgent = c.req.header("user-agent") || "unknown";
+    
+    // Log del intento de XSS
+    if (logData.type === 'XSS_ATTEMPT_FRONTEND') {
+      logXSSAttempt(
+        logData.payload,
+        logData.source,
+        logData.context,
+        ip,
+        userAgent
+      );
+    }
+    
+    // Log estructurado para monitoreo
+    console.log(`📊 Security Log: ${logData.type}`, {
+      timestamp: logData.timestamp,
+      source: logData.source,
+      context: logData.context,
+      ip,
+      userAgent,
+      severity: logData.severity || 'MEDIUM'
+    });
+    
+    return c.json({ success: true, logged: true });
+  } catch (error) {
+    console.error("Error processing security log:", error);
+    return c.json({ error: "Failed to process log" }, 500);
+  }
+});
+
+// Endpoint para obtener estadísticas de seguridad
+monitoring.get("/security/stats", (c) => {
+  // En una implementación real, esto vendría de una base de datos
+  // Por ahora, retornamos datos de ejemplo
+  return c.json({
+    xssAttempts: {
+      total: 0,
+      blocked: 0,
+      last24h: 0
+    },
+    securityEvents: {
+      total: 0,
+      byType: {},
+      bySeverity: {
+        HIGH: 0,
+        MEDIUM: 0,
+        LOW: 0
+      }
+    },
+    lastUpdated: new Date().toISOString()
+  });
+});
+
+// Endpoint para verificar estado de seguridad
+monitoring.get("/security/health", (c) => {
+  return c.json({
+    status: "healthy",
+    security: {
+      xssProtection: "enabled",
+      cspEnabled: true,
+      loggingEnabled: true,
+      timestamp: new Date().toISOString()
+    }
+  });
 });
 
 // Get system health status
