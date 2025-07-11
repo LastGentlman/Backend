@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-all
 
 import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
-import { initializeSupabase, getSupabaseClient } from "./utils/supabase.ts";
+import { getSupabaseClient } from "./utils/supabase.ts";
 
 // Colors for console output
 const colors = {
@@ -17,7 +17,7 @@ function log(message: string, color: keyof typeof colors = "reset") {
   console.log(`${colors[color]}${message}${colors.reset}`);
 }
 
-async function testEnvironmentVariables() {
+function testEnvironmentVariables() {
   log("\n🔧 Testing Environment Variables...", "blue");
   
   const requiredVars = [
@@ -48,7 +48,7 @@ async function testSupabaseConnection() {
     const supabase = getSupabaseClient();
     
     // Test basic connection
-    const { data, error } = await supabase.from('profiles').select('count').limit(1);
+    const { data: _data, error } = await supabase.from('profiles').select('count').limit(1);
     
     if (error) {
       log(`⚠️ Supabase connection warning: ${error.message}`, "yellow");
@@ -79,7 +79,7 @@ async function testAPIServer() {
   for (const endpoint of endpoints) {
     try {
       const response = await fetch(`${baseUrl}${endpoint.path}`);
-      const data = await response.json();
+      const _data = await response.json();
       
       log(`✅ ${endpoint.name}: ${response.status} ${response.statusText}`, "green");
       serverRunning = true;
@@ -143,10 +143,10 @@ async function main() {
     Deno.exit(1);
   }
   
-  // Initialize Supabase
+  // Initialize Supabase (lazy loading)
   try {
-    initializeSupabase();
-    log("✅ Supabase client initialized", "green");
+    getSupabaseClient();
+    log("✅ Supabase client ready (lazy loading)", "green");
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     log(`❌ Failed to initialize Supabase: ${errorMessage}`, "red");

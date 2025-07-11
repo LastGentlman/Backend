@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
 import { validateEnvironmentVariables, getEnvironmentConfig } from "./utils/config.ts";
-import { initializeSupabase } from "./utils/supabase.ts";
+import { getSupabaseClient as _getSupabaseClient } from "./utils/supabase.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 
 // Importar rutas
@@ -51,15 +51,9 @@ if (!CONFIG.IS_PRODUCTION) {
 
 const config = getEnvironmentConfig();
 
-// ===== INITIALIZE SUPABASE =====
-try {
-  initializeSupabase();
-  console.log("✅ Supabase client initialized");
-} catch (error) {
-  const errorMessage = error instanceof Error ? error.message : "Unknown error";
-  console.error("❌ Failed to initialize Supabase:", errorMessage);
-  throw error;
-}
+// ===== SUPABASE CLIENT (Lazy Loading) =====
+// Supabase client will be initialized on first use
+console.log("✅ Supabase client ready (lazy loading)");
 
 // ===== INICIALIZACIÓN DE LA APP =====
 const isDev = config.name === 'development';

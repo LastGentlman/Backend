@@ -37,7 +37,7 @@ auth.post("/register", async (c) => {
 });
 
 // Login user - Con rate limiting condicional (solo en producción)
-auth.post("/login", conditionalAuthRateLimiter, async (c) => {
+auth.post("/login", conditionalAuthRateLimiter(), async (c) => {
   const { email, password } = await c.req.json();
   const supabase = getSupabaseClient();
 

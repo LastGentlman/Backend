@@ -8,12 +8,12 @@ for (const [key, value] of Object.entries(env)) {
 }
 
 // Import the main app
-import { initializeSupabase } from "./utils/supabase.ts";
+import { getSupabaseClient } from "./utils/supabase.ts";
 
-// Initialize Supabase for tests
+// Initialize Supabase for tests (lazy loading)
 try {
-  initializeSupabase();
-  console.log("✅ Supabase initialized for tests");
+  getSupabaseClient();
+  console.log("✅ Supabase ready for tests (lazy loading)");
 } catch (error) {
   console.error("❌ Failed to initialize Supabase for tests:", error);
 }

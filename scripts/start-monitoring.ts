@@ -6,7 +6,7 @@
  */
 
 import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
-import { initializeSupabase } from "../utils/supabase.ts";
+import { getSupabaseClient } from "../utils/supabase.ts";
 import { EnhancedDatabaseMonitor } from "../services/EnhancedDatabaseMonitor.ts";
 import { WhatsAppAlertsService } from "../services/WhatsAppAlertsService.ts";
 
@@ -21,9 +21,9 @@ async function main() {
     }
     console.log('✅ Variables de entorno cargadas');
 
-    // Inicializar Supabase
-    initializeSupabase();
-    console.log('✅ Cliente Supabase inicializado');
+    // Inicializar Supabase (lazy loading)
+    getSupabaseClient();
+    console.log('✅ Cliente Supabase listo (lazy loading)');
 
     // Verificar configuración de WhatsApp
     const whatsappToken = Deno.env.get('META_WHATSAPP_TOKEN');
