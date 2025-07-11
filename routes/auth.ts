@@ -203,7 +203,7 @@ auth.post("/logout", async (c) => {
 });
 
 // ===== RUTA CSRF =====
-auth.get("/csrf/token", csrfTokenGenerator(), async (c) => {
+auth.get("/csrf/token", csrfTokenGenerator(), (c) => {
   const sessionId = c.req.header('X-Session-ID');
   
   if (!sessionId) {

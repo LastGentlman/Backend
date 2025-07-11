@@ -4,7 +4,7 @@ import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
 import { validateEnvironmentVariables, getEnvironmentConfig } from "./utils/config.ts";
 import { getSupabaseClient as _getSupabaseClient } from "./utils/supabase.ts";
 import { authMiddleware } from "./middleware/auth.ts";
-import { csrfProtection, csrfTokenGenerator } from "./utils/csrf.ts";
+import { csrfProtection } from "./utils/csrf.ts";
 import { securityHeadersMiddleware } from "./utils/security.ts";
 
 // Importar rutas
