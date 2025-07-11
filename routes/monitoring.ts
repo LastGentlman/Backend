@@ -4,12 +4,18 @@ import { smartRateLimiter } from "../utils/rateLimiter.ts";
 import { EnhancedDatabaseMonitor } from "../services/EnhancedDatabaseMonitor.ts";
 import { WhatsAppAlertsService } from "../services/WhatsAppAlertsService.ts";
 import { getSupabaseClient } from "../utils/supabase.ts";
+import { authMiddleware, requireAdminOrOwner } from "../middleware/auth.ts";
+import { securityMonitor } from "../services/SecurityMonitoringService.ts";
+import { tokenService } from "../services/TokenManagementService.ts";
 
 const monitoring = new Hono();
 
 // Apply CORS and rate limiting
 monitoring.use("*", cors());
 monitoring.use("*", smartRateLimiter());
+
+// Apply authentication middleware to all routes
+monitoring.use("*", authMiddleware);
 
 /**
  * GET /monitoring/health
@@ -226,7 +232,7 @@ monitoring.post("/whatsapp/webhook", async (c) => {
  * GET /monitoring/whatsapp/webhook
  * WhatsApp webhook verification
  */
-monitoring.get("/whatsapp/webhook", async (c) => {
+monitoring.get("/whatsapp/webhook", (c) => {
   const mode = c.req.query('hub.mode');
   const token = c.req.query('hub.verify_token');
   const challenge = c.req.query('hub.challenge');
@@ -346,6 +352,198 @@ monitoring.get("/report", async (c) => {
     
     return c.json({
       error: errorMessage,
+      timestamp: new Date().toISOString()
+    }, 500);
+  }
+});
+
+// Get security statistics (admin/owner only)
+monitoring.get("/security/stats", requireAdminOrOwner, (c) => {
+  try {
+    const stats = securityMonitor.getSecurityStats();
+    const tokenStats = tokenService.getStats();
+
+    return c.json({
+      message: "Security statistics retrieved successfully",
+      code: "SECURITY_STATS_SUCCESS",
+      data: {
+        security: stats,
+        tokens: tokenStats
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to get security statistics";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
+// Get active security alerts (admin/owner only)
+monitoring.get("/security/alerts", requireAdminOrOwner, (c) => {
+  try {
+    const alerts = securityMonitor.getActiveAlerts();
+
+    return c.json({
+      message: "Active security alerts retrieved successfully",
+      code: "SECURITY_ALERTS_SUCCESS",
+      data: {
+        alerts,
+        count: alerts.length
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to get security alerts";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
+// Resolve a security alert (admin/owner only)
+monitoring.post("/security/alerts/:alertId/resolve", requireAdminOrOwner, (c) => {
+  try {
+    const { alertId } = c.req.param();
+    const user = c.get('user') as { id: string };
+    
+    const resolved = securityMonitor.resolveAlert(alertId, user.id);
+
+    if (!resolved) {
+      return c.json({
+        error: "Alert not found or already resolved",
+        code: "ALERT_NOT_FOUND"
+      }, 404);
+    }
+
+    return c.json({
+      message: "Security alert resolved successfully",
+      code: "ALERT_RESOLVED_SUCCESS",
+      data: { alertId },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to resolve security alert";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
+// Get user security events (admin/owner only)
+monitoring.get("/security/users/:userId/events", requireAdminOrOwner, (c) => {
+  try {
+    const { userId } = c.req.param();
+    const limit = parseInt(c.req.query('limit') || '50');
+    
+    const events = securityMonitor.getUserEvents(userId, limit);
+
+    return c.json({
+      message: "User security events retrieved successfully",
+      code: "USER_EVENTS_SUCCESS",
+      data: {
+        userId,
+        events,
+        count: events.length
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to get user security events";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
+// Get compromised account information (admin/owner only)
+monitoring.get("/security/compromised-accounts", requireAdminOrOwner, (c) => {
+  try {
+    // This would typically query a database in production
+    // For now, we'll return a placeholder response
+    const compromisedAccounts: { userId: string; reason: string; markedAt: Date; markedBy: string }[] = []; // Placeholder - implement based on your storage
+
+    return c.json({
+      message: "Compromised accounts retrieved successfully",
+      code: "COMPROMISED_ACCOUNTS_SUCCESS",
+      data: {
+        accounts: compromisedAccounts,
+        count: compromisedAccounts.length
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to get compromised accounts";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
+// Export security data for analysis (admin/owner only)
+monitoring.get("/security/export", requireAdminOrOwner, (c) => {
+  try {
+    const exportData = securityMonitor.exportSecurityData();
+
+    return c.json({
+      message: "Security data exported successfully",
+      code: "SECURITY_EXPORT_SUCCESS",
+      data: exportData,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to export security data";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
+// Clean up old security data (admin/owner only)
+monitoring.post("/security/cleanup", requireAdminOrOwner, (c) => {
+  try {
+    securityMonitor.cleanup();
+
+    return c.json({
+      message: "Security data cleanup completed successfully",
+      code: "SECURITY_CLEANUP_SUCCESS",
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to cleanup security data";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
+// Get system health status
+monitoring.get("/health", (c) => {
+  try {
+    const securityStats = securityMonitor.getSecurityStats();
+    const tokenStats = tokenService.getStats();
+
+    const healthStatus = {
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+      services: {
+        authentication: "operational",
+        security_monitoring: "operational",
+        token_management: "operational"
+      },
+      metrics: {
+        activeAlerts: securityStats.activeAlerts,
+        blacklistedTokens: tokenStats.blacklistedTokens,
+        compromisedAccounts: tokenStats.compromisedAccounts,
+        totalEvents: securityStats.totalEvents
+      }
+    };
+
+    // Determine overall health status
+    if (securityStats.activeAlerts > 10) {
+      healthStatus.status = "warning";
+    }
+    if (securityStats.activeAlerts > 50) {
+      healthStatus.status = "critical";
+    }
+
+    return c.json({
+      message: "System health check completed",
+      code: "HEALTH_CHECK_SUCCESS",
+      data: healthStatus
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Health check failed";
+    return c.json({ 
+      error: errorMessage,
+      status: "unhealthy",
       timestamp: new Date().toISOString()
     }, 500);
   }
