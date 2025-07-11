@@ -4,10 +4,13 @@ import { smartRateLimiter } from "../utils/rateLimiter.ts";
 import { EnhancedDatabaseMonitor } from "../services/EnhancedDatabaseMonitor.ts";
 import { WhatsAppAlertsService } from "../services/WhatsAppAlertsService.ts";
 import { getSupabaseClient } from "../utils/supabase.ts";
+import type { DatabaseMetrics } from "../services/DatabaseMonitor.ts";
 import { authMiddleware, requireAdminOrOwner } from "../middleware/auth.ts";
 import { securityMonitor } from "../services/SecurityMonitoringService.ts";
 import { tokenService } from "../services/TokenManagementService.ts";
 import { logXSSAttempt } from "../utils/security.ts";
+import { z } from "zod";
+import { validateRequest, getValidatedData } from "../middleware/validation.ts";
 
 const monitoring = new Hono();
 
@@ -17,6 +20,33 @@ monitoring.use("*", smartRateLimiter());
 
 // Apply authentication middleware to all routes
 monitoring.use("*", authMiddleware);
+
+const configureSchema = z.object({
+  metric: z.enum(["ordersPerDay", "avgQueryTime", "databaseSize", "activeConnections", "errorRate", "syncQueueSize", "offlineUsers", "conflictCount"]),
+  threshold: z.number(),
+  action: z.string().min(1),
+  severity: z.enum(["warning", "critical"])
+});
+
+const securityLogSchema = z.object({
+  type: z.string().min(1),
+  payload: z.any(),
+  source: z.string().min(1),
+  context: z.any(),
+  timestamp: z.string().optional(),
+  severity: z.string().optional()
+});
+
+const testAlertSchema = z.object({
+  type: z.string().optional(),
+  phoneNumber: z.string().optional()
+});
+
+const whatsappWebhookSchema = z.object({
+  entry: z.array(z.object({
+    changes: z.array(z.any())
+  })).optional()
+});
 
 /**
  * GET /monitoring/health
@@ -190,9 +220,9 @@ monitoring.get("/alerts", async (c) => {
  * POST /monitoring/whatsapp/webhook
  * WhatsApp webhook for receiving messages
  */
-monitoring.post("/whatsapp/webhook", async (c) => {
+monitoring.post("/whatsapp/webhook", validateRequest(whatsappWebhookSchema), async (c) => {
+  const body = getValidatedData<typeof whatsappWebhookSchema._type>(c);
   try {
-    const body = await c.req.json();
     
     // Verify webhook signature (implement proper verification)
     const signature = c.req.header('x-hub-signature-256');
@@ -254,9 +284,9 @@ monitoring.get("/whatsapp/webhook", (c) => {
  * POST /monitoring/test-alert
  * Test endpoint to send a test alert
  */
-monitoring.post("/test-alert", async (c) => {
+monitoring.post("/test-alert", validateRequest(testAlertSchema), async (c) => {
+  const { type = 'warning', phoneNumber: _phoneNumber } = getValidatedData<typeof testAlertSchema._type>(c);
   try {
-    const { type = 'warning', phoneNumber: _phoneNumber } = await c.req.json();
     
     if (type === 'critical') {
       await WhatsAppAlertsService.sendCriticalAlert(
@@ -296,15 +326,15 @@ monitoring.post("/test-alert", async (c) => {
  * POST /monitoring/configure
  * Configure monitoring thresholds
  */
-monitoring.post("/configure", async (c) => {
+monitoring.post("/configure", validateRequest(configureSchema), async (c) => {
+  const { metric, threshold, action, severity } = getValidatedData<typeof configureSchema._type>(c);
   try {
-    const { metric, threshold, action, severity } = await c.req.json();
     
     await EnhancedDatabaseMonitor.configureCustomAlerts(
-      metric,
+      metric as keyof DatabaseMetrics,
       threshold,
       action,
-      severity
+      severity as "warning" | "critical"
     );
     
     return c.json({
@@ -506,9 +536,9 @@ monitoring.post("/security/cleanup", requireAdminOrOwner, (c) => {
 });
 
 // Endpoint para recibir logs de seguridad del frontend
-monitoring.post("/security/log", async (c) => {
+monitoring.post("/security/log", validateRequest(securityLogSchema), (c) => {
+  const logData = getValidatedData<typeof securityLogSchema._type>(c);
   try {
-    const logData = await c.req.json();
     
     // Validar estructura del log
     if (!logData.type || !logData.payload || !logData.source || !logData.context) {

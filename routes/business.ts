@@ -3,8 +3,10 @@ import { getSupabaseClient } from "../utils/supabase.ts";
 import { requireOwner, requireAdminOrOwner } from "../middleware/auth.ts";
 import { getBusinessFromContext, getEmployeeFromContext, getUserFromContext } from "../types/context.ts";
 import { getStripeClient } from "../utils/stripe.ts";
-import { getTaxRegimeByCode, isValidTaxRegime } from "../utils/taxRegimes.ts";
-import type { TrialActivationRequest, TrialActivationResponse } from "../types/business.ts";
+import { getTaxRegimeByCode, isValidTaxRegime as _isValidTaxRegime } from "../utils/taxRegimes.ts";
+import { validateData, employeeInvitationSchema, trialActivationSchema, businessSettingsUpdateSchema } from "../utils/validation.ts";
+import type { TrialActivationRequest as _TrialActivationRequest, TrialActivationResponse } from "../types/business.ts";
+import type { Price } from "../types/stripe.ts";
 
 const business = new Hono();
 
@@ -28,24 +30,23 @@ business.post("/activate-trial", async (c) => {
     }
 
     // Obtener datos del request
-    const requestData: TrialActivationRequest = await c.req.json();
+    const requestData = await c.req.json();
     
-    // Validar datos requeridos
-    if (!requestData.businessName || !requestData.businessEmail || !requestData.billingName) {
+    // Validar datos con Zod schema
+    const validation = validateData(trialActivationSchema, requestData);
+    if (!validation.success) {
       return c.json({ 
-        error: "Datos requeridos: businessName, businessEmail, billingName" 
+        error: "Datos de entrada inválidos",
+        details: validation.errors.issues.map(issue => ({
+          field: issue.path.join('.'),
+          message: issue.message
+        }))
       }, 400);
     }
+    
+    const validatedData = validation.data;
 
-    // Validar régimen fiscal
-    if (!requestData.taxRegime || !isValidTaxRegime(requestData.taxRegime)) {
-      return c.json({ 
-        error: "Régimen fiscal inválido o no especificado",
-        validRegimes: ["605", "606", "612", "621", "626", "601", "614", "623", "999"]
-      }, 400);
-    }
-
-    const taxRegime = getTaxRegimeByCode(requestData.taxRegime);
+    const taxRegime = getTaxRegimeByCode(validatedData.taxRegime);
     if (!taxRegime) {
       return c.json({ 
         error: "Régimen fiscal no encontrado" 
@@ -57,22 +58,22 @@ business.post("/activate-trial", async (c) => {
 
     // 1. Crear o obtener cliente en Stripe
     const stripeCustomer = await stripe.createOrGetCustomer(
-      requestData.businessEmail,
-      requestData.billingName,
+      validatedData.businessEmail,
+      validatedData.billingName,
       {
         userId: user.id,
-        businessName: requestData.businessName,
-        taxId: requestData.taxId || '',
+        businessName: validatedData.businessName,
+        taxId: validatedData.taxId || '',
       }
     );
 
     // 2. Procesar método de pago si se proporciona
     let paymentMethodId: string | undefined;
-    if (requestData.paymentMethod) {
+    if (validatedData.paymentMethod) {
       try {
         const paymentMethod = await stripe.createPaymentMethod(
-          requestData.paymentMethod.type,
-          requestData.paymentMethod.card
+          validatedData.paymentMethod.type,
+          validatedData.paymentMethod.card
         );
         
         await stripe.attachPaymentMethodToCustomer(paymentMethod.id, stripeCustomer.id);
@@ -98,17 +99,17 @@ business.post("/activate-trial", async (c) => {
     const { data: business, error: businessError } = await supabase
       .from('businesses')
       .insert({
-        name: requestData.businessName,
+        name: validatedData.businessName,
         owner_id: user.id,
-        email: requestData.businessEmail,
-        phone: requestData.businessPhone,
-        address: requestData.businessAddress,
+        email: validatedData.businessEmail,
+        phone: validatedData.businessPhone || null,
+        address: validatedData.businessAddress || null,
         stripe_customer_id: stripeCustomer.id,
         stripe_subscription_id: subscription.id,
         subscription_status: 'trial',
         trial_ends_at: new Date(subscription.trial_end! * 1000).toISOString(),
         settings: {
-          currency: requestData.currency,
+          currency: validatedData.currency,
           taxRegime: {
             code: taxRegime.code,
             name: taxRegime.name,
@@ -121,9 +122,9 @@ business.post("/activate-trial", async (c) => {
           timezone: 'America/Mexico_City'
         },
         billing_info: {
-          name: requestData.billingName,
-          taxId: requestData.taxId,
-          address: requestData.billingAddress
+          name: validatedData.billingName,
+          taxId: validatedData.taxId,
+          address: validatedData.billingAddress
         }
       })
       .select()
@@ -158,8 +159,8 @@ business.post("/activate-trial", async (c) => {
       .insert({
         business_id: business.id,
         name: 'Sucursal Principal',
-        address: requestData.businessAddress || 'Dirección por definir',
-        phone: requestData.businessPhone,
+        address: validatedData.businessAddress || 'Dirección por definir',
+        phone: validatedData.businessPhone || null,
         is_active: true
       });
 
@@ -189,7 +190,7 @@ business.post("/activate-trial", async (c) => {
         stripeCustomerId: stripeCustomer.id,
         stripeSubscriptionId: subscription.id,
         trialEndsAt: new Date(subscription.trial_end! * 1000).toISOString(),
-        currency: requestData.currency,
+        currency: validatedData.currency || "MXN",
         taxRegime: {
           code: taxRegime.code,
           name: taxRegime.name,
@@ -242,7 +243,7 @@ business.get("/prices", async (c) => {
     
     return c.json({
       success: true,
-      prices: prices.data.map((price: any) => ({
+      prices: prices.data.map((price: Price) => ({
         id: price.id,
         nickname: price.nickname,
         unit_amount: price.unit_amount,
@@ -303,12 +304,25 @@ business.patch("/settings", requireAdminOrOwner, async (c) => {
     }, 400);
   }
   
-  const updateData = await c.req.json();
+  const requestData = await c.req.json();
   
+  // Validar datos con Zod schema
+  const validation = validateData(businessSettingsUpdateSchema, requestData);
+  if (!validation.success) {
+    return c.json({ 
+      error: 'Datos de entrada inválidos',
+      details: validation.errors.issues.map(issue => ({
+        field: issue.path.join('.'),
+        message: issue.message
+      }))
+    }, 400);
+  }
+  
+  const updateData = validation.data;
   const supabase = getSupabaseClient();
   
   // Solo permitir actualizar campos específicos
-  const allowedFields = ['settings', 'name'];
+  const allowedFields = ['settings', 'name'] as const;
   const filteredData: Record<string, unknown> = {};
   
   for (const field of allowedFields) {
@@ -395,21 +409,21 @@ business.post("/employees/invite", requireOwner, async (c) => {
     }, 400);
   }
   
-  const { email, role } = await c.req.json();
+  const requestData = await c.req.json();
   
-  if (!email || !role) {
+  // Validar datos con Zod schema
+  const validation = validateData(employeeInvitationSchema, requestData);
+  if (!validation.success) {
     return c.json({ 
-      error: 'Email y rol son requeridos',
-      code: 'MISSING_REQUIRED_FIELDS'
+      error: 'Datos de entrada inválidos',
+      details: validation.errors.issues.map(issue => ({
+        field: issue.path.join('.'),
+        message: issue.message
+      }))
     }, 400);
   }
   
-  if (!['admin', 'seller'].includes(role)) {
-    return c.json({ 
-      error: 'Rol inválido. Solo se permiten: admin, seller',
-      code: 'INVALID_ROLE'
-    }, 400);
-  }
+  const { email, role } = validation.data;
   
   const supabase = getSupabaseClient();
   

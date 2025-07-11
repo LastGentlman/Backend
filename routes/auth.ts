@@ -4,12 +4,25 @@ import { createError } from "../utils/errorHandler.ts";
 import { conditionalAuthRateLimiter } from "../utils/rateLimiter.ts";
 import { csrfTokenGenerator } from "../utils/csrf.ts";
 import { tokenService } from "../services/TokenManagementService.ts";
+import { z } from "zod";
+import { validateRequest, getValidatedData } from "../middleware/validation.ts";
+
+const registerSchema = z.object({
+  email: z.string().email().max(255),
+  password: z.string().min(8).max(100),
+  name: z.string().min(2).max(100)
+});
+
+const loginSchema = z.object({
+  email: z.string().email().max(255),
+  password: z.string().min(8).max(100)
+});
 
 const auth = new Hono();
 
 // Register new user - Versión simplificada con error handler
-auth.post("/register", async (c) => {
-  const { email, password, name } = await c.req.json();
+auth.post("/register", validateRequest(registerSchema), async (c) => {
+  const { email, password, name } = getValidatedData<typeof registerSchema._type>(c);
   const supabase = getSupabaseClient();
 
   const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -39,8 +52,8 @@ auth.post("/register", async (c) => {
 });
 
 // Login user - Con rate limiting condicional (solo en producción)
-auth.post("/login", conditionalAuthRateLimiter(), async (c) => {
-  const { email, password } = await c.req.json();
+auth.post("/login", conditionalAuthRateLimiter(), validateRequest(loginSchema), async (c) => {
+  const { email, password } = getValidatedData<typeof loginSchema._type>(c);
   const supabase = getSupabaseClient();
 
   const { data, error } = await supabase.auth.signInWithPassword({
@@ -184,7 +197,7 @@ auth.get("/profile", async (c) => {
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', user.id)
+      .eq('id', user?.id)
       .single();
 
     if (profileError) {
@@ -271,7 +284,7 @@ auth.post("/force-logout/:userId", async (c) => {
     const { data: adminEmployee, error: employeeError } = await supabase
       .from('employees')
       .select('role')
-      .eq('user_id', adminUser.id)
+      .eq('user_id', adminUser?.id)
       .eq('is_active', true)
       .single();
 
@@ -286,7 +299,7 @@ auth.post("/force-logout/:userId", async (c) => {
     const success = await tokenService.forceLogoutUser(
       userId, 
       'Admin force logout', 
-      adminUser.id
+      adminUser?.id || ''
     );
 
     if (!success) {
@@ -335,7 +348,7 @@ auth.post("/recover-account/:userId", async (c) => {
     const { data: adminEmployee, error: employeeError } = await supabase
       .from('employees')
       .select('role')
-      .eq('user_id', adminUser.id)
+      .eq('user_id', adminUser?.id)
       .eq('is_active', true)
       .single();
 
@@ -396,7 +409,7 @@ auth.get("/token-stats", async (c) => {
     const { data: adminEmployee, error: employeeError } = await supabase
       .from('employees')
       .select('role')
-      .eq('user_id', adminUser.id)
+      .eq('user_id', adminUser?.id || '')
       .eq('is_active', true)
       .single();
 

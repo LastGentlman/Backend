@@ -12,6 +12,8 @@
     "k6/": "https://jslib.k6.io/",
     "k6": "https://jslib.k6.io/index.js",
     "k6/http": "https://jslib.k6.io/http.js",
-    "k6/metrics": "https://jslib.k6.io/metrics.js"
+    "k6/metrics": "https://jslib.k6.io/metrics.js",
+    "zod": "https://esm.sh/zod@3.22.4",
+    "stripe": "https://esm.sh/stripe@14.12.0"
   }
 } 

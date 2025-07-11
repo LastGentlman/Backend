@@ -1,102 +1,51 @@
-// Stripe client for Deno using fetch API
-const STRIPE_BASE_URL = 'https://api.stripe.com/v1';
+import Stripe from "npm:stripe";
 
-interface StripeCustomer {
-  id: string;
-  email: string;
-  name?: string;
-  metadata?: Record<string, string>;
-}
-
-interface StripeSubscription {
-  id: string;
-  customer: string;
-  status: string;
-  trial_end?: number;
-  current_period_end: number;
-}
-
-interface StripePaymentMethod {
-  id: string;
-  type: string;
-  card?: {
-    brand: string;
-    last4: string;
-    exp_month: number;
-    exp_year: number;
-  };
-}
-
+// Official Stripe client for Deno
 export class StripeClient {
-  private secretKey: string;
+  private stripe: Stripe;
 
   constructor() {
-    this.secretKey = Deno.env.get('STRIPE_SECRET_KEY') || '';
-    if (!this.secretKey) {
+    const secretKey = Deno.env.get('STRIPE_SECRET_KEY');
+    if (!secretKey) {
       throw new Error('STRIPE_SECRET_KEY is required');
     }
-  }
-
-  private async makeRequest(endpoint: string, method: string = 'GET', data?: any): Promise<any> {
-    const url = `${STRIPE_BASE_URL}${endpoint}`;
-    const headers = {
-      'Authorization': `Bearer ${this.secretKey}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    };
-
-    const options: RequestInit = {
-      method,
-      headers,
-    };
-
-    if (data && method !== 'GET') {
-      const formData = new URLSearchParams();
-      for (const [key, value] of Object.entries(data)) {
-        if (value !== undefined && value !== null) {
-          formData.append(key, String(value));
-        }
-      }
-      options.body = formData.toString();
-    }
-
-    const response = await fetch(url, options);
     
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Stripe API Error: ${errorData.error?.message || response.statusText}`);
-    }
-
-    return response.json();
+    this.stripe = new Stripe(secretKey, {
+      apiVersion: '2023-10-16',
+    });
   }
 
   // Crear o buscar cliente
-  async createOrGetCustomer(email: string, name?: string, metadata?: Record<string, string>): Promise<StripeCustomer> {
+  async createOrGetCustomer(email: string, name?: string, metadata?: Record<string, string>): Promise<Stripe.Customer> {
     // Primero buscar si ya existe
-    const existingCustomers = await this.makeRequest('/customers?email=' + encodeURIComponent(email));
+    const existingCustomers = await this.stripe.customers.list({
+      email,
+      limit: 1
+    });
     
-    if (existingCustomers.data && existingCustomers.data.length > 0) {
+    if (existingCustomers.data.length > 0) {
       return existingCustomers.data[0];
     }
 
     // Crear nuevo cliente
-    const customerData: any = { email };
-    if (name) customerData.name = name;
-    if (metadata) customerData.metadata = metadata;
-
-    return await this.makeRequest('/customers', 'POST', customerData);
+    return await this.stripe.customers.create({
+      email,
+      name,
+      metadata
+    });
   }
 
   // Crear método de pago
-  async createPaymentMethod(type: string, cardData: any): Promise<StripePaymentMethod> {
-    return await this.makeRequest('/payment_methods', 'POST', {
-      type,
+  async createPaymentMethod(type: string, cardData: Stripe.PaymentMethodCreateParams.Card1): Promise<Stripe.PaymentMethod> {
+    return await this.stripe.paymentMethods.create({
+      type: type as Stripe.PaymentMethodCreateParams.Type,
       card: cardData,
     });
   }
 
   // Adjuntar método de pago al cliente
-  async attachPaymentMethodToCustomer(paymentMethodId: string, customerId: string): Promise<void> {
-    await this.makeRequest(`/payment_methods/${paymentMethodId}/attach`, 'POST', {
+  async attachPaymentMethodToCustomer(paymentMethodId: string, customerId: string): Promise<Stripe.PaymentMethod> {
+    return await this.stripe.paymentMethods.attach(paymentMethodId, {
       customer: customerId,
     });
   }
@@ -107,8 +56,8 @@ export class StripeClient {
     priceId: string, 
     trialDays: number = 7,
     paymentMethodId?: string
-  ): Promise<StripeSubscription> {
-    const subscriptionData: any = {
+  ): Promise<Stripe.Subscription> {
+    const subscriptionData: Stripe.SubscriptionCreateParams = {
       customer: customerId,
       items: [{ price: priceId }],
       trial_period_days: trialDays,
@@ -120,17 +69,20 @@ export class StripeClient {
       subscriptionData.default_payment_method = paymentMethodId;
     }
 
-    return await this.makeRequest('/subscriptions', 'POST', subscriptionData);
+    return await this.stripe.subscriptions.create(subscriptionData);
   }
 
   // Obtener precio por ID
-  async getPrice(priceId: string): Promise<any> {
-    return await this.makeRequest(`/prices/${priceId}`);
+  async getPrice(priceId: string): Promise<Stripe.Price> {
+    return await this.stripe.prices.retrieve(priceId);
   }
 
   // Listar precios disponibles
-  async listPrices(active: boolean = true): Promise<any> {
-    return await this.makeRequest(`/prices?active=${active}`);
+  async listPrices(active: boolean = true): Promise<Stripe.ApiList<Stripe.Price>> {
+    return await this.stripe.prices.list({
+      active,
+      limit: 100
+    });
   }
 }
 
