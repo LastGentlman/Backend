@@ -103,7 +103,7 @@ Deno.test("ConflictResolver - Detect field conflicts correctly", () => {
 
   const conflicts = ConflictResolver.detectFieldConflicts(localOrder, serverOrder);
 
-  assertEquals(conflicts.length, 4); // client_phone, total, delivery_time, status, notes
+  assertEquals(conflicts.length, 5); // client_phone, total, delivery_time, status, notes
   assertEquals(conflicts[0].field, "client_phone");
   assertEquals(conflicts[0].localValue, "123456789");
   assertEquals(conflicts[0].serverValue, "987654321");

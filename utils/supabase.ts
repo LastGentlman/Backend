@@ -17,18 +17,14 @@ export function createSupabaseClient() {
   });
 }
 
-// Create the client instance (will be initialized after env vars are loaded)
-let supabase: ReturnType<typeof createSupabaseClient>;
-
-export function initializeSupabase() {
-  supabase = createSupabaseClient();
-}
+// Lazy initialization with proper typing
+let supabaseClient: ReturnType<typeof createSupabaseClient> | null = null;
 
 export function getSupabaseClient() {
-  if (!supabase) {
-    throw new Error("Supabase client not initialized. Call initializeSupabase() first.");
+  if (!supabaseClient) {
+    supabaseClient = createSupabaseClient();
   }
-  return supabase;
+  return supabaseClient;
 }
 
 // Helper function to get user from JWT token

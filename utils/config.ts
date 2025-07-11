@@ -8,11 +8,11 @@ export interface EnvironmentConfig {
     windowMs: number;
   };
   logging: {
-    level: '🔍🐛' | 'ℹ️' | '⚠️' | '‼️ Error 🚨';
+    level: 'debug' | 'info' | 'warn' | 'error';
     detailed: boolean;
   };
   cors: {
-    origins: string[];
+    origins: string[]; // ✅ FIJO: Array de strings específicos
   };
   features: {
     debugMode: boolean;
@@ -50,16 +50,19 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
         name: "production",
         rateLimiting: {
           enabled: true,
-          defaultRequests: 100, // Estricto
-          authRequests: 5,      // Muy estricto
-          windowMs: 60 * 1000   // 1 minuto
+          defaultRequests: 100,
+          authRequests: 5,
+          windowMs: 60 * 1000
         },
         logging: {
-          level: "⚠️",
+          level: "warn",
           detailed: false
         },
         cors: {
-          origins: ["https://pedidolist.vercel.app"] // Solo producción
+          // ✅ FIJO: Solo dominios específicos en producción
+          origins: [
+            "https://www.pedidolist.com"
+          ]
         },
         features: {
           debugMode: false,
@@ -75,20 +78,21 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
         name: "staging",
         rateLimiting: {
           enabled: true,
-          defaultRequests: 500, // Más permisivo que producción
-          authRequests: 20,     // Más permisivo que producción
-          windowMs: 60 * 1000   // 1 minuto
+          defaultRequests: 500,
+          authRequests: 20,
+          windowMs: 60 * 1000
         },
         logging: {
-          level: "ℹ️",
+          level: "info",
           detailed: true
         },
         cors: {
+          // ✅ Staging permite más orígenes para testing
           origins: [
             "http://localhost:3000", 
-            "http://localhost:5173", 
-            "https://pedidolist.vercel.app",
-            "https://staging.pedidolist.vercel.app" // URL de staging
+            "http://localhost:5173",
+            "https://www.pedidolist.com",
+            "https://pedidolist.com"
           ]
         },
         features: {
@@ -104,21 +108,24 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
       return {
         name: "development",
         rateLimiting: {
-          enabled: false,
-          defaultRequests: 0,
-          authRequests: 0,
-          windowMs: 0
+          enabled: false, // ✅ Deshabilitado en desarrollo
+          defaultRequests: 1000,
+          authRequests: 100,
+          windowMs: 60 * 1000
         },
         logging: {
-          level: "🔍🐛",
+          level: "debug",
           detailed: true
         },
         cors: {
+          // ✅ Desarrollo permite localhost
           origins: [
-            "http://localhost:3030", 
-            "http://localhost:5173",
             "http://localhost:3000",
-            "https://pedidolist.vercel.app"
+            "http://localhost:5173",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:5173",
+            "https://www.pedidolist.com",
+            "https://pedidolist.com"
           ]
         },
         features: {
@@ -126,7 +133,7 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
           testEndpoints: true
         },
         security: {
-          strictCORS: false
+          strictCORS: false // ✅ Más permisivo en desarrollo
         }
       };
   }
@@ -144,9 +151,9 @@ export const logEnvironmentConfig = () => {
   console.log(`   Rate Limiting: ${config.rateLimiting.enabled ? '✅' : '❌'}`);
   if (config.rateLimiting.enabled) {
     console.log(`     - Default: ${config.rateLimiting.defaultRequests} req/min`);
-    console.log(`     - Auth: ${config.rateLimiting.authRequests} req/15min`);
+    console.log(`     - Auth: ${config.rateLimiting.authRequests} req/min`);
   }
-  console.log(`   Logging Level: ${config.logging.level}`);
+  console.log(`   Logging Level: ${config.logging.level.toUpperCase()}`);
   console.log(`   Debug Mode: ${config.features.debugMode ? '✅' : '❌'}`);
   console.log(`   Test Endpoints: ${config.features.testEndpoints ? '✅' : '❌'}`);
   console.log(`   CORS Origins: ${config.cors.origins.length} configured`);

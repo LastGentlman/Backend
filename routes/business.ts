@@ -1,15 +1,272 @@
 import { Hono } from "hono";
 import { getSupabaseClient } from "../utils/supabase.ts";
 import { requireOwner, requireAdminOrOwner } from "../middleware/auth.ts";
+import { getBusinessFromContext, getEmployeeFromContext, getUserFromContext } from "../types/context.ts";
+import { getStripeClient } from "../utils/stripe.ts";
+import { getTaxRegimeByCode, isValidTaxRegime as _isValidTaxRegime } from "../utils/taxRegimes.ts";
+import { validateData, employeeInvitationSchema, trialActivationSchema, businessSettingsUpdateSchema } from "../utils/validation.ts";
+import type { TrialActivationRequest as _TrialActivationRequest, TrialActivationResponse } from "../types/business.ts";
+import type { Price } from "../types/stripe.ts";
 
 const business = new Hono();
+
+// ===== ACTIVACIÓN DE TRIAL =====
+
+// Activar trial gratuito y crear negocio
+business.post("/activate-trial", async (c) => {
+  try {
+    // Obtener usuario del token
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Token de autorización requerido" }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const { getUserFromToken } = await import("../utils/supabase.ts");
+    const user = await getUserFromToken(token);
+    
+    if (!user) {
+      return c.json({ error: "Usuario no encontrado" }, 401);
+    }
+
+    // Obtener datos del request
+    const requestData = await c.req.json();
+    
+    // Validar datos con Zod schema
+    const validation = validateData(trialActivationSchema, requestData);
+    if (!validation.success) {
+      return c.json({ 
+        error: "Datos de entrada inválidos",
+        details: validation.errors.issues.map(issue => ({
+          field: issue.path.join('.'),
+          message: issue.message
+        }))
+      }, 400);
+    }
+    
+    const validatedData = validation.data;
+
+    const taxRegime = getTaxRegimeByCode(validatedData.taxRegime);
+    if (!taxRegime) {
+      return c.json({ 
+        error: "Régimen fiscal no encontrado" 
+      }, 400);
+    }
+
+    const supabase = getSupabaseClient();
+    const stripe = getStripeClient();
+
+    // 1. Crear o obtener cliente en Stripe
+    const stripeCustomer = await stripe.createOrGetCustomer(
+      validatedData.businessEmail,
+      validatedData.billingName,
+      {
+        userId: user.id,
+        businessName: validatedData.businessName,
+        taxId: validatedData.taxId || '',
+      }
+    );
+
+    // 2. Procesar método de pago si se proporciona
+    let paymentMethodId: string | undefined;
+    if (validatedData.paymentMethod) {
+      try {
+        const paymentMethod = await stripe.createPaymentMethod(
+          validatedData.paymentMethod.type,
+          validatedData.paymentMethod.card
+        );
+        
+        await stripe.attachPaymentMethodToCustomer(paymentMethod.id, stripeCustomer.id);
+        paymentMethodId = paymentMethod.id;
+      } catch (error) {
+        console.error('Error processing payment method:', error);
+        // No fallar si el método de pago falla (trial puede continuar)
+      }
+    }
+
+    // 3. Crear suscripción con trial de 7 días
+    // Nota: Necesitas crear un Price en Stripe primero
+    const priceId = Deno.env.get('STRIPE_PRICE_ID') || 'price_default';
+    
+    const subscription = await stripe.createSubscriptionWithTrial(
+      stripeCustomer.id,
+      priceId,
+      7, // 7 días de trial
+      paymentMethodId
+    );
+
+    // 4. Crear negocio en la base de datos
+    const { data: business, error: businessError } = await supabase
+      .from('businesses')
+      .insert({
+        name: validatedData.businessName,
+        owner_id: user.id,
+        email: validatedData.businessEmail,
+        phone: validatedData.businessPhone || null,
+        address: validatedData.businessAddress || null,
+        stripe_customer_id: stripeCustomer.id,
+        stripe_subscription_id: subscription.id,
+        subscription_status: 'trial',
+        trial_ends_at: new Date(subscription.trial_end! * 1000).toISOString(),
+        settings: {
+          currency: validatedData.currency,
+          taxRegime: {
+            code: taxRegime.code,
+            name: taxRegime.name,
+            type: taxRegime.type
+          },
+          notifications: {
+            email: true,
+            push: true
+          },
+          timezone: 'America/Mexico_City'
+        },
+        billing_info: {
+          name: validatedData.billingName,
+          taxId: validatedData.taxId,
+          address: validatedData.billingAddress
+        }
+      })
+      .select()
+      .single();
+
+    if (businessError) {
+      console.error('Error creating business:', businessError);
+      return c.json({ 
+        error: 'Error al crear el negocio',
+        details: businessError.message 
+      }, 500);
+    }
+
+    // 5. Crear empleado (owner) asociado al negocio
+    const { error: employeeError } = await supabase
+      .from('employees')
+      .insert({
+        user_id: user.id,
+        business_id: business.id,
+        role: 'owner',
+        is_active: true
+      });
+
+    if (employeeError) {
+      console.error('Error creating employee:', employeeError);
+      // No fallar si ya existe
+    }
+
+    // 6. Crear sucursal por defecto
+    const { error: branchError } = await supabase
+      .from('branches')
+      .insert({
+        business_id: business.id,
+        name: 'Sucursal Principal',
+        address: validatedData.businessAddress || 'Dirección por definir',
+        phone: validatedData.businessPhone || null,
+        is_active: true
+      });
+
+    if (branchError) {
+      console.error('Error creating branch:', branchError);
+      // No fallar si hay error en sucursal
+    }
+
+    // 7. Actualizar perfil del usuario con businessId
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ 
+        current_business_id: business.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', user.id);
+
+    if (profileError) {
+      console.error('Error updating user profile:', profileError);
+    }
+
+    const response: TrialActivationResponse = {
+      success: true,
+      business: {
+        id: business.id,
+        name: business.name,
+        stripeCustomerId: stripeCustomer.id,
+        stripeSubscriptionId: subscription.id,
+        trialEndsAt: new Date(subscription.trial_end! * 1000).toISOString(),
+        currency: validatedData.currency || "MXN",
+        taxRegime: {
+          code: taxRegime.code,
+          name: taxRegime.name,
+          type: taxRegime.type
+        }
+      },
+      subscription: {
+        id: subscription.id,
+        status: subscription.status,
+        trialEnd: subscription.trial_end!,
+        currentPeriodEnd: subscription.current_period_end
+      }
+    };
+
+    return c.json(response);
+
+  } catch (error) {
+    console.error('Error in trial activation:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    return c.json({ 
+      error: 'Error al activar el trial',
+      details: errorMessage 
+    }, 500);
+  }
+});
+
+// Obtener regímenes fiscales disponibles
+business.get("/tax-regimes", async (c) => {
+  try {
+    const { TAX_REGIMES } = await import("../utils/taxRegimes.ts");
+    
+    return c.json({
+      success: true,
+      taxRegimes: TAX_REGIMES
+    });
+  } catch (error) {
+    console.error('Error fetching tax regimes:', error);
+    return c.json({ 
+      error: 'Error al obtener regímenes fiscales',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    }, 500);
+  }
+});
+
+// Obtener precios disponibles para suscripciones
+business.get("/prices", async (c) => {
+  try {
+    const stripe = getStripeClient();
+    const prices = await stripe.listPrices(true);
+    
+    return c.json({
+      success: true,
+      prices: prices.data.map((price: Price) => ({
+        id: price.id,
+        nickname: price.nickname,
+        unit_amount: price.unit_amount,
+        currency: price.currency,
+        recurring: price.recurring,
+        active: price.active
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching prices:', error);
+    return c.json({ 
+      error: 'Error al obtener precios',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    }, 500);
+  }
+});
 
 // ===== RUTAS DE NEGOCIOS =====
 
 // Obtener información del negocio actual
-business.get("/", async (c) => {
-  const business = c.get('business');
-  const employee = c.get('employee');
+business.get("/", (c) => {
+  const business = getBusinessFromContext(c);
+  const employee = getEmployeeFromContext(c);
   
   if (!business || !employee) {
     return c.json({ 
@@ -37,15 +294,36 @@ business.get("/", async (c) => {
 
 // Actualizar configuración del negocio (solo owner/admin)
 business.patch("/settings", requireAdminOrOwner, async (c) => {
-  const business = c.get('business');
-  const user = c.get('user');
-  const updateData = await c.req.json();
+  const business = getBusinessFromContext(c);
+  const user = getUserFromContext(c);
   
+  if (!business || !user) {
+    return c.json({ 
+      error: 'Contexto de negocio y usuario requerido',
+      code: 'CONTEXT_REQUIRED'
+    }, 400);
+  }
+  
+  const requestData = await c.req.json();
+  
+  // Validar datos con Zod schema
+  const validation = validateData(businessSettingsUpdateSchema, requestData);
+  if (!validation.success) {
+    return c.json({ 
+      error: 'Datos de entrada inválidos',
+      details: validation.errors.issues.map(issue => ({
+        field: issue.path.join('.'),
+        message: issue.message
+      }))
+    }, 400);
+  }
+  
+  const updateData = validation.data;
   const supabase = getSupabaseClient();
   
   // Solo permitir actualizar campos específicos
-  const allowedFields = ['settings', 'name'];
-  const filteredData: any = {};
+  const allowedFields = ['settings', 'name'] as const;
+  const filteredData: Record<string, unknown> = {};
   
   for (const field of allowedFields) {
     if (updateData[field] !== undefined) {
@@ -81,7 +359,15 @@ business.patch("/settings", requireAdminOrOwner, async (c) => {
 
 // Obtener empleados del negocio (solo owner/admin)
 business.get("/employees", requireAdminOrOwner, async (c) => {
-  const business = c.get('business');
+  const business = getBusinessFromContext(c);
+  
+  if (!business) {
+    return c.json({ 
+      error: 'Contexto de negocio requerido',
+      code: 'BUSINESS_CONTEXT_REQUIRED'
+    }, 400);
+  }
+  
   const supabase = getSupabaseClient();
   
   const { data: employees, error } = await supabase
@@ -113,35 +399,44 @@ business.get("/employees", requireAdminOrOwner, async (c) => {
 
 // Invitar nuevo empleado (solo owner)
 business.post("/employees/invite", requireOwner, async (c) => {
-  const business = c.get('business');
-  const user = c.get('user');
-  const { email, role } = await c.req.json();
+  const business = getBusinessFromContext(c);
+  const user = getUserFromContext(c);
   
-  if (!email || !role) {
+  if (!business || !user) {
     return c.json({ 
-      error: 'Email y rol son requeridos',
-      code: 'MISSING_REQUIRED_FIELDS'
+      error: 'Contexto de negocio y usuario requerido',
+      code: 'CONTEXT_REQUIRED'
     }, 400);
   }
   
-  if (!['admin', 'seller'].includes(role)) {
+  const requestData = await c.req.json();
+  
+  // Validar datos con Zod schema
+  const validation = validateData(employeeInvitationSchema, requestData);
+  if (!validation.success) {
     return c.json({ 
-      error: 'Rol inválido. Solo se permiten: admin, seller',
-      code: 'INVALID_ROLE'
+      error: 'Datos de entrada inválidos',
+      details: validation.errors.issues.map(issue => ({
+        field: issue.path.join('.'),
+        message: issue.message
+      }))
     }, 400);
   }
+  
+  const { email, role } = validation.data;
   
   const supabase = getSupabaseClient();
   
   // Verificar si el usuario ya existe
-  const { data: existingUser } = await supabase.auth.admin.getUserByEmail(email);
+  const { data: existingUsers } = await supabase.auth.admin.listUsers();
+  const existingUser = existingUsers.users.find(user => user.email === email);
   
-  if (existingUser.user) {
+  if (existingUser) {
     // Usuario existe, verificar si ya es empleado
     const { data: existingEmployee } = await supabase
       .from('employees')
       .select('id')
-      .eq('user_id', existingUser.user.id)
+      .eq('user_id', existingUser.id)
       .eq('business_id', business.id)
       .single();
       
@@ -183,7 +478,15 @@ business.post("/employees/invite", requireOwner, async (c) => {
 
 // Obtener estadísticas del negocio (solo owner/admin)
 business.get("/stats", requireAdminOrOwner, async (c) => {
-  const business = c.get('business');
+  const business = getBusinessFromContext(c);
+  
+  if (!business) {
+    return c.json({ 
+      error: 'Contexto de negocio requerido',
+      code: 'BUSINESS_CONTEXT_REQUIRED'
+    }, 400);
+  }
+  
   const supabase = getSupabaseClient();
   
   const today = new Date().toISOString().split('T')[0];

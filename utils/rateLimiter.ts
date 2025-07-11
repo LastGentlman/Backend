@@ -1,4 +1,5 @@
 import { Context, Next } from "hono";
+import { getEnvironmentConfig } from "./config.ts";
 
 interface RateLimitConfig {
   windowMs: number; // Ventana de tiempo en ms
@@ -56,13 +57,11 @@ export function createRateLimiter(config: RateLimitConfig) {
 }
 
 // Middleware que aplica rate limiting según el entorno
-export function conditionalRateLimiter(config: RateLimitConfig, name: string = "default") {
+export function conditionalRateLimiter(config: RateLimitConfig, _name: string = "default") {
   return async (c: Context, next: Next) => {
-    const NODE_ENV = Deno.env.get("NODE_ENV") || "development";
-    const isProduction = NODE_ENV === "production";
-    const isStaging = NODE_ENV === "staging";
+    const envConfig = getEnvironmentConfig();
     
-    if (isProduction || isStaging) {
+    if (envConfig.rateLimiting.enabled) {
       // Aplicar rate limiting
       const rateLimiter = createRateLimiter(config);
       return rateLimiter(c, next);
@@ -73,55 +72,50 @@ export function conditionalRateLimiter(config: RateLimitConfig, name: string = "
   };
 }
 
-// Configuración por defecto: 100 requests por minuto
-export const defaultRateLimiter = createRateLimiter({
-  windowMs: 60 * 1000, // 1 minuto
-  maxRequests: 100
-});
+// Configuración por defecto usando config del entorno
+export const defaultRateLimiter = () => {
+  const config = getEnvironmentConfig();
+  return createRateLimiter({
+    windowMs: config.rateLimiting.windowMs,
+    maxRequests: config.rateLimiting.defaultRequests
+  });
+};
 
 // Rate limiter más estricto para auth endpoints
-export const authRateLimiter = createRateLimiter({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  maxRequests: 5
-});
+export const authRateLimiter = () => {
+  const config = getEnvironmentConfig();
+  return createRateLimiter({
+    windowMs: config.rateLimiting.windowMs,
+    maxRequests: config.rateLimiting.authRequests
+  });
+};
 
-// Rate limiters condicionales (solo en producción y staging)
-export const conditionalDefaultRateLimiter = conditionalRateLimiter({
-  windowMs: 60 * 1000,
-  maxRequests: 100
-}, "default");
+// Rate limiters condicionales (solo cuando está habilitado)
+export const conditionalDefaultRateLimiter = () => {
+  const config = getEnvironmentConfig();
+  return conditionalRateLimiter({
+    windowMs: config.rateLimiting.windowMs,
+    maxRequests: config.rateLimiting.defaultRequests
+  }, "default");
+};
 
-export const conditionalAuthRateLimiter = conditionalRateLimiter({
-  windowMs: 15 * 60 * 1000,
-  maxRequests: 5
-}, "auth");
-
-// Configuraciones específicas para staging (más permisivas que producción)
-export const stagingDefaultRateLimiter = createRateLimiter({
-  windowMs: 60 * 1000, // 1 minuto
-  maxRequests: 500 // Más permisivo que producción (100)
-});
-
-export const stagingAuthRateLimiter = createRateLimiter({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  maxRequests: 20 // Más permisivo que producción (5)
-});
+export const conditionalAuthRateLimiter = () => {
+  const config = getEnvironmentConfig();
+  return conditionalRateLimiter({
+    windowMs: config.rateLimiting.windowMs,
+    maxRequests: config.rateLimiting.authRequests
+  }, "auth");
+};
 
 // Rate limiter inteligente que usa configuraciones según el entorno
 export function smartRateLimiter() {
   return async (c: Context, next: Next) => {
-    const NODE_ENV = Deno.env.get("NODE_ENV") || "development";
+    const config = getEnvironmentConfig();
     
-    if (NODE_ENV === "production") {
+    if (config.rateLimiting.enabled) {
       const rateLimiter = createRateLimiter({
-        windowMs: 60 * 1000,
-        maxRequests: 100
-      });
-      return rateLimiter(c, next);
-    } else if (NODE_ENV === "staging") {
-      const rateLimiter = createRateLimiter({
-        windowMs: 60 * 1000,
-        maxRequests: 500 // Más permisivo en staging
+        windowMs: config.rateLimiting.windowMs,
+        maxRequests: config.rateLimiting.defaultRequests
       });
       return rateLimiter(c, next);
     } else {

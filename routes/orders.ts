@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { getSupabaseClient, getUserFromToken, getBusinessContext } from "../utils/supabase.ts";
 import { ConflictResolver, syncAllPendingOrders } from "../utils/conflictResolution.ts";
-import type { CreateOrderRequest, UpdateOrderRequest } from "../types/index.ts";
+import type { CreateOrderRequest as _CreateOrderRequest, UpdateOrderRequest as _UpdateOrderRequest } from "../types/index.ts";
+import { createOrderSchema, updateOrderSchema, syncOrdersSchema } from "../utils/validation.ts";
+import { validateRequest, getValidatedData } from "../middleware/validation.ts";
 
 const orders = new Hono();
 
@@ -100,10 +102,10 @@ orders.get("/by-date", authMiddleware, async (c) => {
 });
 
 // Create new order
-orders.post("/", authMiddleware, async (c) => {
+orders.post("/", authMiddleware, validateRequest(createOrderSchema), async (c) => {
   const user = c.get("user") as RequestContext["user"];
   const context = c.get("context") as RequestContext["context"];
-  const orderData: CreateOrderRequest = await c.req.json();
+  const orderData = getValidatedData<typeof createOrderSchema._type>(c);
   const supabase = getSupabaseClient();
 
   // Calculate total
@@ -204,10 +206,10 @@ orders.post("/", authMiddleware, async (c) => {
 });
 
 // Update order status
-orders.patch("/:id", authMiddleware, async (c) => {
+orders.patch("/:id", authMiddleware, validateRequest(updateOrderSchema), async (c) => {
   const user = c.get("user") as RequestContext["user"];
   const orderId = c.req.param("id");
-  const updateData: UpdateOrderRequest = await c.req.json();
+  const updateData = getValidatedData<typeof updateOrderSchema._type>(c);
   const supabase = getSupabaseClient();
 
   const { data: order, error } = await supabase
@@ -231,9 +233,9 @@ orders.patch("/:id", authMiddleware, async (c) => {
 });
 
 // Sync offline orders with conflict resolution
-orders.post("/sync", authMiddleware, async (c) => {
+orders.post("/sync", authMiddleware, validateRequest(syncOrdersSchema), async (c) => {
   const user = c.get("user") as RequestContext["user"];
-  const { orders: offlineOrders } = await c.req.json();
+  const { orders: offlineOrders } = getValidatedData<typeof syncOrdersSchema._type>(c);
   
   try {
     // Usar el sistema de resolución de conflictos

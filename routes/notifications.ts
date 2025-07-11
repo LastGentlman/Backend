@@ -3,6 +3,8 @@ import * as webpush from "@negrel/webpush";
 import { getSupabaseClient } from "../utils/supabase.ts";
 import { authMiddleware } from "../middleware/auth.ts";
 import type { User } from "@supabase/supabase-js";
+import { z } from "zod";
+import { validateRequest, getValidatedData } from "../middleware/validation.ts";
 
 // Fuller definition for a push subscription
 interface PushSubscription {
@@ -64,16 +66,24 @@ async function getApplicationServer() {
     return applicationServer;
 }
 
+const subscribeSchema = z.object({
+  subscription: z.object({
+    endpoint: z.string().url(),
+    keys: z.object({
+      p256dh: z.string(),
+      auth: z.string()
+    })
+  }),
+  businessId: z.string().uuid().optional()
+});
+
 // All notification routes require a valid user
 notifications.use("/*", authMiddleware);
 
 // Subscribe a user's device, optionally linking it to a business
-notifications.post("/subscribe", async (c) => {
+notifications.post("/subscribe", validateRequest(subscribeSchema), async (c) => {
     const user = c.get("user");
-    const { subscription, businessId } = await c.req.json<{
-        subscription: PushSubscription;
-        businessId?: string;
-    }>();
+    const { subscription, businessId } = getValidatedData<typeof subscribeSchema._type>(c);
 
     if (!subscription || !subscription.endpoint) {
         return c.json({ error: "Invalid subscription object" }, 400);
