@@ -4,6 +4,8 @@ import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
 import { validateEnvironmentVariables, getEnvironmentConfig } from "./utils/config.ts";
 import { getSupabaseClient as _getSupabaseClient } from "./utils/supabase.ts";
 import { authMiddleware } from "./middleware/auth.ts";
+import { csrfProtection, csrfTokenGenerator } from "./utils/csrf.ts";
+import { securityHeadersMiddleware } from "./utils/security.ts";
 
 // Importar rutas
 import testRoutes from "./routes/test.ts";
@@ -97,8 +99,8 @@ app.use("*", cors({
   origin: config.cors.origins, // ✅ FIJO: Orígenes específicos por ambiente
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-  exposeHeaders: ['Content-Length'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Session-ID', 'X-CSRF-Token'],
+  exposeHeaders: ['Content-Length', 'X-CSRF-Token'],
   maxAge: 600, // Cache preflight por 10 minutos
 }));
 
@@ -130,6 +132,12 @@ app.use("*", async (c, next) => {
     console.log(logMessage);
   }
 });
+
+// 4. Middleware de headers de seguridad
+app.use("*", securityHeadersMiddleware());
+
+// 5. Middleware CSRF para rutas de API
+app.use("/api/*", csrfProtection());
 
 // ===== HEALTH CHECK (antes de rutas protegidas) =====
 app.get("/health", async (c) => {

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { getSupabaseClient } from "../utils/supabase.ts";
 import { createError } from "../utils/errorHandler.ts";
 import { conditionalAuthRateLimiter } from "../utils/rateLimiter.ts";
+import { csrfTokenGenerator } from "../utils/csrf.ts";
 
 const auth = new Hono();
 
@@ -199,6 +200,23 @@ auth.post("/logout", async (c) => {
     const errorMessage = error instanceof Error ? error.message : "Logout failed";
     return c.json({ error: errorMessage }, 500);
   }
+});
+
+// ===== RUTA CSRF =====
+auth.get("/csrf/token", csrfTokenGenerator(), async (c) => {
+  const sessionId = c.req.header('X-Session-ID');
+  
+  if (!sessionId) {
+    return c.json({
+      error: 'Session ID requerido',
+      code: 'SESSION_ID_MISSING'
+    }, 400);
+  }
+  
+  return c.json({
+    message: 'Token CSRF generado exitosamente',
+    sessionId
+  });
 });
 
 export default auth; 
