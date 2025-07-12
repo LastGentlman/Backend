@@ -348,21 +348,16 @@ export function validateRequestBody(body: Record<string, unknown>): {
   for (const [key, value] of Object.entries(body)) {
     if (typeof value === 'string') {
       const sanitizedValue = sanitizeInput(value, `body.${key}`);
-      
       if (sanitizedValue === '[CONTENIDO BLOQUEADO]') {
         errors.push(`Campo '${key}' contiene contenido sospechoso`);
-        // No agregar el campo al resultado sanitizado
         continue;
       }
-      
       sanitized[key] = sanitizedValue;
     } else if (typeof value === 'object' && value !== null) {
-      // Recursivamente validar objetos anidados
+      // Recursively validate nested objects, but always include the sanitized version
       const nestedValidation = validateRequestBody(value as Record<string, unknown>);
       if (!nestedValidation.isValid) {
         errors.push(...nestedValidation.errors.map(err => `${key}.${err}`));
-        // Si el objeto anidado tiene errores, no incluirlo en el resultado sanitizado
-        continue;
       }
       sanitized[key] = nestedValidation.sanitized;
     } else {
