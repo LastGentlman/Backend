@@ -50,7 +50,7 @@ const CSP_CONFIG = {
 };
 ```
 
-#### Key CSP Features:
+#### Key CSP Features
 
 - **Environment-specific policies**: Different CSP rules for production vs development
 - **Strict frame policies**: `frame-src: 'none'` and `frame-ancestors: 'none'`
