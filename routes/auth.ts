@@ -6,10 +6,12 @@ import { csrfTokenGenerator } from "../utils/csrf.ts";
 import { tokenService } from "../services/TokenManagementService.ts";
 import { z } from "zod";
 import { validateRequest, getValidatedData } from "../middleware/validation.ts";
+import { strongPasswordSchema, validatePassword } from "../utils/passwordSecurity.ts";
+import { SecureLogger } from "../utils/secureLogger.ts";
 
 const registerSchema = z.object({
   email: z.string().email().max(255),
-  password: z.string().min(8).max(100),
+  password: strongPasswordSchema,
   name: z.string().min(2).max(100)
 });
 
@@ -24,6 +26,28 @@ const auth = new Hono();
 auth.post("/register", validateRequest(registerSchema), async (c) => {
   const { email, password, name } = getValidatedData<typeof registerSchema._type>(c);
   const supabase = getSupabaseClient();
+  const logger = SecureLogger.getInstance();
+
+  // 🔒 ENHANCED: Additional password validation
+  const passwordValidation = validatePassword(password);
+  if (!passwordValidation.isValid) {
+    logger.logSecurityEvent({
+      level: 'warning',
+      message: 'Weak password attempt during registration',
+      data: { 
+        email,
+        strength: passwordValidation.strength,
+        errors: passwordValidation.errors
+      },
+      ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+    });
+
+    return c.json({
+      error: "Contraseña débil",
+      details: passwordValidation.errors,
+      strength: passwordValidation.strength
+    }, 400);
+  }
 
   const { data: authData, error: authError } = await supabase.auth.signUp({
     email,
@@ -44,6 +68,19 @@ auth.post("/register", validateRequest(registerSchema), async (c) => {
   if (!authData.user) {
     throw createError("Registration failed. Please try again.", 500);
   }
+
+  // 🔒 ENHANCED: Log successful registration
+  logger.logSecurityEvent({
+    level: 'info',
+    message: 'User registered successfully',
+    data: { 
+      email,
+      userId: authData.user.id,
+      strength: passwordValidation.strength.score
+    },
+    userId: authData.user.id,
+    ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+  });
 
   return c.json({
     message: "User registered successfully. Please check your email to verify your account.",
