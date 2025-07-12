@@ -350,6 +350,7 @@ export function validateRequestBody(body: Record<string, unknown>): {
       const sanitizedValue = sanitizeInput(value, `body.${key}`);
       if (sanitizedValue === '[CONTENIDO BLOQUEADO]') {
         errors.push(`Campo '${key}' contiene contenido sospechoso`);
+        sanitized[key] = undefined;
         continue;
       }
       sanitized[key] = sanitizedValue;

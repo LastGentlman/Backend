@@ -245,12 +245,12 @@ Deno.test("SQL Injection Protection - validateRequestBody", async (t) => {
     assertEquals((result.sanitized.user as Record<string, unknown>).name as string, "John");
     assertEquals((result.sanitized.settings as Record<string, unknown>).theme as string, "dark");
     assertEquals((result.sanitized.settings as Record<string, unknown>).notifications as boolean, true);
-    const sanitizedEmail = (result.sanitized.user as Record<string, unknown>).email as string;
-    console.log("Sanitized email as string:", String(sanitizedEmail));
+    const sanitizedEmail = (result.sanitized.user as Record<string, unknown>).email;
+    console.log("Sanitized email:", sanitizedEmail);
     assertEquals(
       sanitizedEmail,
       undefined,
-      `Sanitized email should be missing (undefined), got: ${sanitizedEmail}`
+      `Sanitized email should be undefined, got: ${sanitizedEmail}`
     );
   });
 });
