@@ -58,9 +58,17 @@ function cleanupExpiredTokens(): void {
 export function csrfProtection() {
   return async (c: Context, next: () => Promise<void>) => {
     const method = c.req.method;
+    const path = c.req.path;
     
     // Solo aplicar a métodos que modifican datos
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      // Excluir endpoints de autenticación de la protección CSRF
+      const authEndpoints = ['/api/auth/login', '/api/auth/register', '/api/auth/forgot-password', '/api/auth/reset-password'];
+      if (authEndpoints.includes(path)) {
+        await next();
+        return;
+      }
+      
       const sessionId = c.req.header('X-Session-ID');
       const csrfToken = c.req.header('X-CSRF-Token');
       

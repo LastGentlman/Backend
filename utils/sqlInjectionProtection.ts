@@ -351,6 +351,7 @@ export function validateRequestBody(body: Record<string, unknown>): {
       
       if (sanitizedValue === '[CONTENIDO BLOQUEADO]') {
         errors.push(`Campo '${key}' contiene contenido sospechoso`);
+        // No agregar el campo al resultado sanitizado
         continue;
       }
       
@@ -360,6 +361,8 @@ export function validateRequestBody(body: Record<string, unknown>): {
       const nestedValidation = validateRequestBody(value as Record<string, unknown>);
       if (!nestedValidation.isValid) {
         errors.push(...nestedValidation.errors.map(err => `${key}.${err}`));
+        // Si el objeto anidado tiene errores, no incluirlo en el resultado sanitizado
+        continue;
       }
       sanitized[key] = nestedValidation.sanitized;
     } else {
