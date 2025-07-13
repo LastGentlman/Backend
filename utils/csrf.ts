@@ -63,7 +63,16 @@ export function csrfProtection() {
     // Solo aplicar a métodos que modifican datos
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
       // Excluir endpoints de autenticación de la protección CSRF
-      const authEndpoints = ['/api/auth/login', '/api/auth/register', '/api/auth/forgot-password', '/api/auth/reset-password'];
+      const authEndpoints = [
+        '/api/auth/login', 
+        '/api/auth/register', 
+        '/api/auth/forgot-password', 
+        '/api/auth/reset-password', 
+        '/api/auth/logout',
+        '/api/auth/confirm-email',
+        '/api/auth/resend-confirmation',
+        '/api/auth/recover-account'
+      ];
       if (authEndpoints.includes(path)) {
         await next();
         return;
