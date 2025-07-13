@@ -21,9 +21,16 @@ const compromisedAccounts = new Map<string, CompromisedAccount>();
 
 export class TokenManagementService {
   private static instance: TokenManagementService;
-  private supabase = getSupabaseClient();
+  private supabase: ReturnType<typeof getSupabaseClient> | null = null;
 
   private constructor() {}
+
+  private getSupabase() {
+    if (!this.supabase) {
+      this.supabase = getSupabaseClient();
+    }
+    return this.supabase!;
+  }
 
   public static getInstance(): TokenManagementService {
     if (!TokenManagementService.instance) {
@@ -157,7 +164,7 @@ export class TokenManagementService {
       }
 
       // Verify with Supabase
-      const { data: { user }, error: authError } = await this.supabase.auth.getUser(token);
+      const { data: { user }, error: authError } = await this.getSupabase().auth.getUser(token);
       
       if (authError || !user) {
         return {
@@ -195,7 +202,7 @@ export class TokenManagementService {
    */
   public async getUserSessions(userId: string): Promise<{ token: string }[]> {
     try {
-      const { data: { users }, error } = await this.supabase.auth.admin.listUsers();
+      const { data: { users }, error } = await this.getSupabase().auth.admin.listUsers();
       
       if (error) {
         throw new Error('Failed to retrieve user sessions');

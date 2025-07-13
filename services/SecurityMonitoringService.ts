@@ -30,9 +30,16 @@ const userLoginAttempts = new Map<string, { count: number; lastAttempt: Date; ip
 
 export class SecurityMonitoringService {
   private static instance: SecurityMonitoringService;
-  private supabase = getSupabaseClient();
+  private supabase: ReturnType<typeof getSupabaseClient> | null = null;
 
   private constructor() {}
+
+  private getSupabase() {
+    if (!this.supabase) {
+      this.supabase = getSupabaseClient();
+    }
+    return this.supabase!;
+  }
 
   public static getInstance(): SecurityMonitoringService {
     if (!SecurityMonitoringService.instance) {
