@@ -18,8 +18,8 @@ const monitoring = new Hono();
 monitoring.use("*", cors());
 monitoring.use("*", smartRateLimiter());
 
-// Apply authentication middleware to all routes
-monitoring.use("*", authMiddleware);
+// Apply authentication middleware to protected routes only
+// Note: /security/log endpoint is excluded from authentication
 
 const configureSchema = z.object({
   metric: z.enum(["ordersPerDay", "avgQueryTime", "databaseSize", "activeConnections", "errorRate", "syncQueueSize", "offlineUsers", "conflictCount"]),
@@ -52,7 +52,7 @@ const whatsappWebhookSchema = z.object({
  * GET /monitoring/health
  * Health check endpoint with detailed system status
  */
-monitoring.get("/health", async (c) => {
+monitoring.get("/health", authMiddleware, async (c) => {
   try {
     const supabase = getSupabaseClient();
     
@@ -101,7 +101,7 @@ monitoring.get("/health", async (c) => {
  * POST /monitoring/check
  * Manual trigger for monitoring check
  */
-monitoring.post("/check", async (c) => {
+monitoring.post("/check", authMiddleware, async (c) => {
   try {
     console.log('🔍 Manual monitoring check triggered');
     
@@ -129,7 +129,7 @@ monitoring.post("/check", async (c) => {
  * POST /monitoring/emergency
  * Emergency monitoring check (bypasses business hours)
  */
-monitoring.post("/emergency", async (c) => {
+monitoring.post("/emergency", authMiddleware, async (c) => {
   try {
     console.log('🚨 Emergency monitoring check triggered');
     
@@ -157,7 +157,7 @@ monitoring.post("/emergency", async (c) => {
  * GET /monitoring/metrics
  * Get current system metrics
  */
-monitoring.get("/metrics", async (c) => {
+monitoring.get("/metrics", authMiddleware, async (c) => {
   try {
     const metrics = await EnhancedDatabaseMonitor.collectMetrics();
     const triggers = await EnhancedDatabaseMonitor.checkMigrationTriggers(metrics);
@@ -183,7 +183,7 @@ monitoring.get("/metrics", async (c) => {
  * GET /monitoring/alerts
  * Get alert statistics and history
  */
-monitoring.get("/alerts", async (c) => {
+monitoring.get("/alerts", authMiddleware, async (c) => {
   try {
     const stats = await EnhancedDatabaseMonitor.getAlertStatistics();
     const supabase = getSupabaseClient();
@@ -535,7 +535,7 @@ monitoring.post("/security/cleanup", requireAdminOrOwner, (c) => {
   }
 });
 
-// Endpoint para recibir logs de seguridad del frontend
+// Endpoint para recibir logs de seguridad del frontend (sin autenticación requerida)
 monitoring.post("/security/log", validateRequest(securityLogSchema), (c) => {
   const logData = getValidatedData<typeof securityLogSchema._type>(c);
   try {
