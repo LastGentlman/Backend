@@ -4,6 +4,7 @@ import { ConflictResolver, syncAllPendingOrders } from "../utils/conflictResolut
 import type { CreateOrderRequest as _CreateOrderRequest, UpdateOrderRequest as _UpdateOrderRequest } from "../types/index.ts";
 import { createOrderSchema, updateOrderSchema, syncOrdersSchema } from "../utils/validation.ts";
 import { validateRequest, getValidatedData } from "../middleware/validation.ts";
+import { ordersSyncRateLimiter } from "../utils/rateLimiter.ts";
 
 const orders = new Hono();
 
@@ -233,7 +234,7 @@ orders.patch("/:id", authMiddleware, validateRequest(updateOrderSchema), async (
 });
 
 // Sync offline orders with conflict resolution
-orders.post("/sync", authMiddleware, validateRequest(syncOrdersSchema), async (c) => {
+orders.post("/sync", authMiddleware, ordersSyncRateLimiter(), validateRequest(syncOrdersSchema), async (c) => {
   const user = c.get("user") as RequestContext["user"];
   const { orders: offlineOrders } = getValidatedData<typeof syncOrdersSchema._type>(c);
   

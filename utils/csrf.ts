@@ -62,8 +62,8 @@ export function csrfProtection() {
     
     // Solo aplicar a métodos que modifican datos
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-      // Excluir endpoints de autenticación de la protección CSRF
-      const authEndpoints = [
+      // Excluir endpoints de autenticación y load testing de la protección CSRF
+      const excludedEndpoints = [
         '/api/auth/login', 
         '/api/auth/register', 
         '/api/auth/forgot-password', 
@@ -71,9 +71,10 @@ export function csrfProtection() {
         '/api/auth/logout',
         '/api/auth/confirm-email',
         '/api/auth/resend-confirmation',
-        '/api/auth/recover-account'
+        '/api/auth/recover-account',
+        '/api/orders/sync'  // Excluir sync para load testing
       ];
-      if (authEndpoints.includes(path)) {
+              if (excludedEndpoints.includes(path)) {
         await next();
         return;
       }
