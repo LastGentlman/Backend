@@ -17,6 +17,7 @@ import whatsappRoutes from "./routes/whatsapp.ts";
 import k6Routes from "./routes/k6.ts";
 import monitoringRoutes from "./routes/monitoring.ts";
 import productsRoutes from "./routes/products.ts";
+import clientsRoutes from "./routes/clients.ts";
 
 // ===== LOAD ENVIRONMENT VARIABLES =====
 // Load .env file if it exists (for local development)
@@ -180,6 +181,7 @@ app.route("/api/monitoring", monitoringRoutes);
 app.use("/api/orders/*", authMiddleware);
 app.use("/api/business/*", authMiddleware);
 app.use("/api/products/*", authMiddleware);
+app.use("/api/clients/*", authMiddleware);
 app.use("/api/test/*", authMiddleware);
 app.use("/api/notifications/*", authMiddleware);
 
@@ -188,6 +190,7 @@ app.route("/api/test", testRoutes);
 app.route("/api/orders", ordersRoutes);
 app.route("/api/business", businessRoutes);
 app.route("/api/products", productsRoutes);
+app.route("/api/clients", clientsRoutes);
 app.route("/api/notifications", notificationsRoutes);
 
 // ===== MANEJO DE RUTAS NO ENCONTRADAS =====
