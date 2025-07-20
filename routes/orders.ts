@@ -73,6 +73,80 @@ orders.get("/today", authMiddleware, async (c) => {
   return c.json({ orders });
 });
 
+// Get all orders for a business
+orders.get("/:businessId", authMiddleware, async (c) => {
+  try {
+    const businessId = c.req.param("businessId");
+    const context = c.get("context") as RequestContext["context"];
+    const supabase = getSupabaseClient();
+
+    // Security: Ensure user can only access their business orders
+    if (!context.business || context.business.id !== businessId) {
+      return c.json({ 
+        error: "Acceso no autorizado",
+        code: "UNAUTHORIZED_BUSINESS_ACCESS"
+      }, 403);
+    }
+
+    // Get query parameters for filtering
+    const status = c.req.query("status");
+    const startDate = c.req.query("start_date");
+    const endDate = c.req.query("end_date");
+    const limit = parseInt(c.req.query("limit") || "50");
+    const offset = parseInt(c.req.query("offset") || "0");
+
+    // Build query
+    let query = supabase
+      .from('orders')
+      .select(`
+        *,
+        items:order_items(*)
+      `)
+      .eq('business_id', businessId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    // Apply filters
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    if (startDate) {
+      query = query.gte('delivery_date', startDate);
+    }
+
+    if (endDate) {
+      query = query.lte('delivery_date', endDate);
+    }
+
+    const { data: orders, error } = await query;
+
+    if (error) {
+      console.error('Error fetching orders:', error);
+      return c.json({ 
+        error: "Error al obtener pedidos",
+        details: error.message 
+      }, 500);
+    }
+
+    return c.json({ 
+      orders: orders || [],
+      pagination: {
+        limit,
+        offset,
+        total: orders?.length || 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Unexpected error in GET /orders/:businessId:', error);
+    return c.json({ 
+      error: "Error interno del servidor",
+      details: error instanceof Error ? error.message : "Error desconocido"
+    }, 500);
+  }
+});
+
 // Get orders by date range
 orders.get("/by-date", authMiddleware, async (c) => {
   const context = c.get("context") as RequestContext["context"];
@@ -231,6 +305,101 @@ orders.patch("/:id", authMiddleware, validateRequest(updateOrderSchema), async (
   }
 
   return c.json({ order });
+});
+
+// Update order status only
+orders.patch("/:orderId/status", authMiddleware, async (c) => {
+  try {
+    const orderId = c.req.param("orderId");
+    const user = c.get("user") as RequestContext["user"];
+    const context = c.get("context") as RequestContext["context"];
+    const { status } = await c.req.json();
+    const supabase = getSupabaseClient();
+
+    // Validate status
+    const validStatuses = ["pending", "preparing", "ready", "delivered", "cancelled"];
+    if (!validStatuses.includes(status)) {
+      return c.json({ 
+        error: "Estado inválido",
+        code: "INVALID_STATUS",
+        validStatuses 
+      }, 400);
+    }
+
+    // Check if order exists and belongs to the business
+    const { data: existingOrder, error: fetchError } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .eq('business_id', context.business.id)
+      .single();
+
+    if (fetchError || !existingOrder) {
+      return c.json({ 
+        error: "Pedido no encontrado",
+        code: "ORDER_NOT_FOUND"
+      }, 404);
+    }
+
+    // Update order status
+    const { data: order, error } = await supabase
+      .from('orders')
+      .update({
+        status,
+        modified_by: user.id,
+        last_modified_at: new Date().toISOString()
+      })
+      .eq('id', orderId)
+      .eq('business_id', context.business.id)
+      .select(`
+        *,
+        items:order_items(*)
+      `)
+      .single();
+
+    if (error) {
+      console.error('Error updating order status:', error);
+      return c.json({ 
+        error: "Error al actualizar estado del pedido",
+        details: error.message 
+      }, 500);
+    }
+
+    // Send notification if status changed to ready or delivered
+    if (status === 'ready' || status === 'delivered') {
+      try {
+        const currentUrl = new URL(c.req.url);
+        await fetch(`${currentUrl.origin}/api/notifications/order-status-update`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': c.req.header('Authorization') || '',
+          },
+          body: JSON.stringify({ 
+            orderId: order.id,
+            businessId: context.business.id,
+            status,
+            clientPhone: order.client_phone
+          })
+        });
+      } catch (notifyError) {
+        // Don't fail if notification fails, just log
+        console.error("Failed to send status update notification:", notifyError);
+      }
+    }
+
+    return c.json({
+      order,
+      message: `Estado del pedido actualizado a: ${status}`
+    });
+
+  } catch (error) {
+    console.error('Unexpected error in PATCH /orders/:orderId/status:', error);
+    return c.json({ 
+      error: "Error interno del servidor",
+      details: error instanceof Error ? error.message : "Error desconocido"
+    }, 500);
+  }
 });
 
 // Sync offline orders with conflict resolution
