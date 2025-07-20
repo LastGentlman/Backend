@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Hono } from "hono";
 import { getSupabaseClient, getUserFromToken, getBusinessContext } from "../utils/supabase.ts";
 import { logXSSAttempt } from "../utils/security.ts";

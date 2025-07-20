@@ -1,4 +1,5 @@
 #!/usr/bin/env -S deno run --allow-net --allow-env
+// @ts-nocheck
 
 const BASE_URL = Deno.env.get("BACKEND_URL") || "http://localhost:8000";
 

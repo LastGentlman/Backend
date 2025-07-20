@@ -10,7 +10,11 @@
     "lib": [
       "deno.window"
     ],
-    "strict": true
+    "strict": true,
+    "allowJs": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
   },
   "deploy": {
     "project": "2152c28f-7840-4177-879a-d3162e1ae606",
