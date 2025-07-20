@@ -1,5 +1,6 @@
 // @ts-nocheck
-import { Hono, cors } from "hono";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
 import { validateEnvironmentVariables, getEnvironmentConfig } from "./utils/config.ts";
 import { getSupabaseClient as _getSupabaseClient } from "./utils/supabase.ts";
