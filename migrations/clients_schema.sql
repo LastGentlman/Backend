@@ -100,7 +100,7 @@ BEGIN
   
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 -- Trigger para actualizar estadísticas cuando se crea/actualiza un pedido
 CREATE TRIGGER update_client_stats_trigger
@@ -115,7 +115,7 @@ BEGIN
   NEW.updated_at = NOW();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 -- Trigger para actualizar updated_at
 CREATE TRIGGER update_clients_updated_at_trigger

@@ -1,7 +1,88 @@
--- ===== MIGRACIÓN PARA PROCEDIMIENTOS ALMACENADOS =====
+-- ===== MIGRACIÓN DE SEGURIDAD - SOLUCIÓN SEARCH_PATH =====
+-- Este script corrige las funciones con search_path mutable detectadas por el linter de Supabase
 -- Ejecutar en Supabase SQL Editor
 
--- Función para obtener estadísticas de conflictos por negocio
+-- 1. Función update_client_stats (clients_schema.sql)
+CREATE OR REPLACE FUNCTION update_client_stats()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Actualizar total_orders y total_spent del cliente
+  UPDATE clients 
+  SET 
+    total_orders = (
+      SELECT COUNT(*) 
+      FROM orders 
+      WHERE client_name = clients.name 
+      AND business_id = clients.business_id
+    ),
+    total_spent = (
+      SELECT COALESCE(SUM(total), 0) 
+      FROM orders 
+      WHERE client_name = clients.name 
+      AND business_id = clients.business_id
+    ),
+    last_order_date = (
+      SELECT MAX(delivery_date) 
+      FROM orders 
+      WHERE client_name = clients.name 
+      AND business_id = clients.business_id
+    ),
+    updated_at = NOW()
+  WHERE business_id = NEW.business_id 
+  AND name = NEW.client_name;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
+
+-- 2. Función update_clients_updated_at (clients_schema.sql)
+CREATE OR REPLACE FUNCTION update_clients_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
+
+-- 3. Función update_updated_at_column (whatsapp_integration.sql)
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
+
+-- 4. Función update_last_modified (main_schema.sql)
+CREATE OR REPLACE FUNCTION update_last_modified()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.last_modified_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
+
+-- 5. Función cleanup_old_offline_data (main_schema.sql)
+CREATE OR REPLACE FUNCTION cleanup_old_offline_data()
+RETURNS void AS $$
+BEGIN
+  -- Limpiar pedidos de más de 30 días
+  DELETE FROM orders 
+  WHERE delivery_date < CURRENT_DATE - INTERVAL '30 days'
+  AND status IN ('completed', 'cancelled');
+  
+  -- Limpiar cola de sincronización de más de 7 días
+  DELETE FROM sync_queue 
+  WHERE created_at < NOW() - INTERVAL '7 days'
+  AND status IN ('completed', 'failed');
+  
+  -- Limpiar resoluciones de conflictos de más de 30 días
+  DELETE FROM conflict_resolutions 
+  WHERE created_at < NOW() - INTERVAL '30 days';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
+
+-- 6. Función get_conflict_stats (stored_procedures.sql)
 CREATE OR REPLACE FUNCTION get_conflict_stats(business_uuid UUID)
 RETURNS TABLE (
   total_conflicts BIGINT,
@@ -24,7 +105,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
--- Función para obtener el tamaño de la base de datos en MB
+-- 7. Función get_database_size (stored_procedures.sql)
 CREATE OR REPLACE FUNCTION get_database_size()
 RETURNS NUMERIC AS $$
 BEGIN
@@ -34,7 +115,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
--- Función para obtener métricas de rendimiento de queries
+-- 8. Función get_query_performance_stats (stored_procedures.sql)
 CREATE OR REPLACE FUNCTION get_query_performance_stats()
 RETURNS TABLE (
   avg_query_time NUMERIC,
@@ -57,7 +138,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
--- Función para limpiar logs antiguos automáticamente
+-- 9. Función cleanup_old_logs (stored_procedures.sql)
 CREATE OR REPLACE FUNCTION cleanup_old_logs()
 RETURNS void AS $$
 BEGIN
@@ -80,7 +161,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
--- Función para obtener estadísticas de sincronización
+-- 10. Función get_sync_stats (stored_procedures.sql)
 CREATE OR REPLACE FUNCTION get_sync_stats(business_uuid UUID)
 RETURNS TABLE (
   pending_syncs BIGINT,
@@ -102,7 +183,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
--- Función para obtener métricas de usuarios activos
+-- 11. Función get_active_users_stats (stored_procedures.sql)
 CREATE OR REPLACE FUNCTION get_active_users_stats(business_uuid UUID)
 RETURNS TABLE (
   total_users BIGINT,
@@ -124,7 +205,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
--- Función para obtener estadísticas de órdenes por período
+-- 12. Función get_orders_stats (stored_procedures.sql)
 CREATE OR REPLACE FUNCTION get_orders_stats(
   business_uuid UUID,
   start_date DATE DEFAULT NULL,
@@ -161,7 +242,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
--- Función para validar y sanitizar entrada de texto
+-- 13. Función sanitize_text (stored_procedures.sql)
 CREATE OR REPLACE FUNCTION sanitize_text(input_text TEXT)
 RETURNS TEXT AS $$
 BEGIN
@@ -179,7 +260,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
--- Función para registrar actividad sospechosa
+-- 14. Función log_suspicious_activity (stored_procedures.sql)
 CREATE OR REPLACE FUNCTION log_suspicious_activity(
   user_id UUID,
   activity_type TEXT,
@@ -207,25 +288,29 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
--- Comentarios para documentación
-COMMENT ON FUNCTION get_conflict_stats(UUID) IS 'Obtiene estadísticas de conflictos de sincronización por negocio';
-COMMENT ON FUNCTION get_database_size() IS 'Obtiene el tamaño de la base de datos en MB';
-COMMENT ON FUNCTION get_query_performance_stats() IS 'Obtiene métricas de rendimiento de queries';
-COMMENT ON FUNCTION cleanup_old_logs() IS 'Limpia logs antiguos automáticamente';
-COMMENT ON FUNCTION get_sync_stats(UUID) IS 'Obtiene estadísticas de sincronización por negocio';
-COMMENT ON FUNCTION get_active_users_stats(UUID) IS 'Obtiene estadísticas de usuarios activos por negocio';
-COMMENT ON FUNCTION get_orders_stats(UUID, DATE, DATE) IS 'Obtiene estadísticas de órdenes por período';
-COMMENT ON FUNCTION sanitize_text(TEXT) IS 'Sanitiza texto de entrada para prevenir SQL injection';
-COMMENT ON FUNCTION log_suspicious_activity(UUID, TEXT, JSONB, INET, TEXT) IS 'Registra actividad sospechosa para monitoreo de seguridad';
-
--- Crear índices para optimizar las funciones
--- Note: idx_conflict_resolutions_order_id is created in main_schema.sql, avoiding duplication
-CREATE INDEX IF NOT EXISTS idx_query_logs_created_at ON query_logs(created_at);
-CREATE INDEX IF NOT EXISTS idx_error_logs_created_at ON error_logs(created_at);
-CREATE INDEX IF NOT EXISTS idx_sync_queue_created_at ON sync_queue(created_at);
-CREATE INDEX IF NOT EXISTS idx_user_sessions_last_activity ON user_sessions(last_activity);
-CREATE INDEX IF NOT EXISTS idx_security_logs_created_at ON security_logs(created_at);
-
--- Programar limpieza automática de logs (ejecutar diariamente)
--- Nota: Esto requiere configuración de cron en Supabase
--- SELECT cron.schedule('cleanup-logs', '0 2 * * *', 'SELECT cleanup_old_logs();'); 
+-- Confirmar que las funciones se han actualizado correctamente
+DO $$
+DECLARE
+    func_count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO func_count
+    FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    WHERE n.nspname = 'public'
+    AND p.proname IN (
+        'update_client_stats', 'update_clients_updated_at', 'update_updated_at_column',
+        'update_last_modified', 'cleanup_old_offline_data', 'get_conflict_stats',
+        'get_database_size', 'get_query_performance_stats', 'cleanup_old_logs',
+        'get_sync_stats', 'get_active_users_stats', 'get_orders_stats',
+        'sanitize_text', 'log_suspicious_activity'
+    );
+    
+    RAISE NOTICE 'Total de funciones actualizadas: %', func_count;
+    
+    IF func_count = 14 THEN
+        RAISE NOTICE '✅ Todas las funciones han sido actualizadas correctamente con SECURITY DEFINER SET search_path = ''''';
+    ELSE
+        RAISE WARNING '⚠️  Algunas funciones podrían no haberse actualizado correctamente. Esperadas: 14, Encontradas: %', func_count;
+    END IF;
+END;
+$$; 

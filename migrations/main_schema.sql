@@ -262,7 +262,7 @@ BEGIN
   NEW.last_modified_at = NOW();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 -- Trigger para actualizar last_modified_at en pedidos
 CREATE TRIGGER update_orders_last_modified
@@ -288,7 +288,7 @@ BEGIN
   DELETE FROM conflict_resolutions 
   WHERE created_at < NOW() - INTERVAL '30 days';
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 -- ===== DATOS INICIALES =====
 

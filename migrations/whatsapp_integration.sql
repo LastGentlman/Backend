@@ -78,7 +78,7 @@ BEGIN
   NEW.updated_at = NOW();
   RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 -- Triggers para actualizar updated_at
 CREATE TRIGGER update_alert_rules_updated_at 
