@@ -14,7 +14,9 @@
     "allowJs": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true
   },
   "deploy": {
     "project": "2152c28f-7840-4177-879a-d3162e1ae606",
@@ -24,5 +26,7 @@
     "include": [],
     "entrypoint": "main.ts"
   },
-  "importMap": "import_map.json"
+  "importMap": "import_map.json",
+  "nodeModulesDir": false,
+  "unstable": []
 }

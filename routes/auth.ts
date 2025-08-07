@@ -249,6 +249,47 @@ auth.get("/profile", async (c) => {
   }
 });
 
+// Get current authenticated user (for frontend auth checking)
+auth.get("/me", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Missing authorization header" }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    
+    // 🔒 ENHANCED: Use TokenManagementService for validation
+    const validationResult = await tokenService.validateToken(token);
+    
+    if (!validationResult.isValid) {
+      return c.json({ 
+        error: validationResult.error || "Invalid token"
+      }, 401);
+    }
+
+    const user = validationResult.user;
+    if (!user) {
+      return c.json({ error: "User not found" }, 401);
+    }
+
+    // Return user data in the format expected by frontend
+    return c.json({
+      id: user.id,
+      email: user.email,
+      name: (user as unknown as { user_metadata?: { name?: string } }).user_metadata?.name || user.email?.split('@')[0] || 'Usuario',
+      avatar_url: (user as unknown as { user_metadata?: { avatar_url?: string } }).user_metadata?.avatar_url,
+      provider: 'email',
+      businessId: (user as unknown as { user_metadata?: { businessId?: string } }).user_metadata?.businessId,
+      role: (user as unknown as { user_metadata?: { role?: string } }).user_metadata?.role || 'owner'
+    });
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to get user";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
 // Enhanced logout user with token blacklisting
 auth.post("/logout", async (c) => {
   try {
