@@ -389,10 +389,10 @@ monitoring.get("/report", async (c) => {
 });
 
 // Get security statistics (admin/owner only)
-monitoring.get("/security/stats", requireAdminOrOwner, (c) => {
+monitoring.get("/security/stats", requireAdminOrOwner, async (c) => {
   try {
     const stats = securityMonitor.getSecurityStats();
-    const tokenStats = tokenService.getStats();
+    const tokenStats = await tokenService.getStatsAsync();
 
     return c.json({
       message: "Security statistics retrieved successfully",
@@ -616,10 +616,10 @@ monitoring.get("/security/health", (c) => {
 });
 
 // Get system health status
-monitoring.get("/health", (c) => {
+monitoring.get("/health", async (c) => {
   try {
     const securityStats = securityMonitor.getSecurityStats();
-    const tokenStats = tokenService.getStats();
+    const tokenStats = await tokenService.getStatsAsync();
 
     const healthStatus = {
       status: "healthy",
@@ -639,10 +639,10 @@ monitoring.get("/health", (c) => {
 
     // Determine overall health status
     if (securityStats.activeAlerts > 10) {
-      healthStatus.status = "warning";
+      healthStatus.status = "warning" as const;
     }
     if (securityStats.activeAlerts > 50) {
-      healthStatus.status = "critical";
+      healthStatus.status = "critical" as const;
     }
 
     return c.json({

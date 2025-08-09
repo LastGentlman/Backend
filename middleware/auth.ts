@@ -54,8 +54,8 @@ export const authMiddleware = async (c: Context, next: () => Promise<void | Resp
         ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown',
         userAgent: c.req.header('user-agent') || 'unknown',
         details: { 
-          reason: validationResult.error,
-          code: validationResult.code
+          reason: validationResult.error || 'Token inválido',
+          code: validationResult.code || 'AUTH_TOKEN_INVALID'
         },
         severity: validationResult.code === 'AUTH_TOKEN_BLACKLISTED' ? 'high' : 'medium'
       });
@@ -71,38 +71,38 @@ export const authMiddleware = async (c: Context, next: () => Promise<void | Resp
 
     // 🔒 NEW: Log successful authentication
     securityMonitor.logEvent({
-      userId: user.id,
+      userId: user?.id,
       eventType: 'login_success',
       ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown',
       userAgent: c.req.header('user-agent') || 'unknown',
       details: { 
-        email: user.email,
+        email: user?.email || 'unknown',
         tokenType: 'access'
       },
       severity: 'low'
     });
 
     // 🔒 NEW: Apply user-specific rate limiting
-    const _userKey = `user_auth:${user.id}`;
+    const _userKey = `user_auth:${user?.id}`;
     const rateLimitResult = await userAuthRateLimiter(c, async () => {});
     
     if (rateLimitResult && rateLimitResult.status === 429) {
       // Mark account as potentially compromised after too many failed attempts
       tokenService.markAccountAsCompromised(
-        user.id, 
+        user?.id || 'unknown', 
         'Rate limit exceeded', 
         'system'
       );
 
       // 🔒 NEW: Log rate limit exceeded event
       securityMonitor.logEvent({
-        userId: user.id,
+        userId: user?.id || 'unknown',
         eventType: 'rate_limit_exceeded',
         ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown',
         userAgent: c.req.header('user-agent') || 'unknown',
         details: { 
           reason: 'User-specific rate limit exceeded',
-          email: user.email
+          email: user?.email || 'unknown'
         },
         severity: 'high'
       });
@@ -129,7 +129,7 @@ export const authMiddleware = async (c: Context, next: () => Promise<void | Resp
           is_active,
           business_id,
           created_at`)
-        .eq('user_id', user.id)
+        .eq('user_id', user?.id || 'unknown')
         .eq('business_id', businessId)
         .eq('is_active', true)
         .single();
@@ -138,7 +138,7 @@ export const authMiddleware = async (c: Context, next: () => Promise<void | Resp
         return c.json({ 
           error: 'Sin acceso a este negocio',
           code: 'BUSINESS_ACCESS_DENIED',
-          details: `Usuario ${user.email} no es empleado activo del negocio ${businessId}`
+          details: `Usuario ${user?.email || 'unknown'} no es empleado activo del negocio ${businessId}`
         }, 403);
       }
 
@@ -182,11 +182,11 @@ export const authMiddleware = async (c: Context, next: () => Promise<void | Resp
       c.set('employee', employee);
       c.set('business', business);
 
-      console.log(`✅ Auth success: ${user.email} (${employee.role}) -> ${business.name}`);
+      console.log(`✅ Auth success: ${user?.email || 'unknown'} (${employee.role}) -> ${business.name}`);
 
     } else {
       c.set('user', user);
-      console.log(`✅ Auth success: ${user.email} (Sin negocio)`);
+      console.log(`✅ Auth success: ${user?.email || 'unknown'} (Sin negocio)`);
     }
 
     return await next();
@@ -317,12 +317,12 @@ export const blacklistToken = (token: string, reason?: string) => {
   tokenService.blacklistToken(token, reason);
 };
 
-export const isAccountCompromised = (userId: string) => {
-  return tokenService.isAccountCompromised(userId);
+export const isAccountCompromised = async (userId: string) => {
+  return await tokenService.isAccountCompromisedAsync(userId);
 };
 
-export const isTokenBlacklisted = (token: string) => {
-  return tokenService.isTokenBlacklisted(token);
+export const isTokenBlacklisted = async (token: string) => {
+  return await tokenService.isTokenBlacklistedAsync(token);
 };
 
 // =============================================================================

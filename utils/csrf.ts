@@ -1,19 +1,20 @@
 import { Context } from "hono";
+import { RedisService } from "../services/RedisService.ts";
 
-// Almacén de tokens CSRF (en producción usar Redis)
-const csrfTokens = new Map<string, { token: string; expires: number }>();
+// Redis-backed CSRF token storage (fallback handled by RedisService)
+const redis = RedisService.getInstance();
+const CSRF_PREFIX = "csrf";
+const CSRF_TTL_SECONDS = 30 * 60; // 30 minutes
 
 /**
  * Genera un token CSRF único
  */
 export function generateCSRFToken(sessionId: string): string {
   const token = crypto.randomUUID();
-  const expires = Date.now() + (30 * 60 * 1000); // 30 minutos
-  
-  csrfTokens.set(sessionId, { token, expires });
-  
-  // Limpiar tokens expirados
-  cleanupExpiredTokens();
+  // Store token in Redis with TTL
+  const key = `${CSRF_PREFIX}:${sessionId}`;
+  // Best effort async set, ignore errors to avoid crashing request path
+  redis.setex(key, CSRF_TTL_SECONDS, token).catch(() => {});
   
   return token;
 }
@@ -21,34 +22,23 @@ export function generateCSRFToken(sessionId: string): string {
 /**
  * Valida un token CSRF
  */
-export function validateCSRFToken(sessionId: string, token: string): boolean {
-  const stored = csrfTokens.get(sessionId);
-  
-  if (!stored) {
-    return false;
-  }
-  
-  if (Date.now() > stored.expires) {
-    csrfTokens.delete(sessionId);
-    return false;
-  }
-  
-  if (stored.token !== token) {
-    return false;
-  }
-  
-  return true;
+export function validateCSRFToken(sessionId: string, _token: string): boolean {
+  const _key = `${CSRF_PREFIX}:${sessionId}`;
+  // Synchronous-style check using async getter with simple deopt (will be awaited in middleware usage if needed)
+  // Here we cannot block synchronously; callers should await an async variant if required.
+  // For compatibility, we optimistically return true only after matching value.
+  // Convert to blocking pattern in middleware below.
+  throw new Error("validateCSRFToken should not be called directly; use validateCSRFTokenAsync in middleware");
 }
 
-/**
- * Limpia tokens expirados
- */
-function cleanupExpiredTokens(): void {
-  const now = Date.now();
-  for (const [sessionId, data] of csrfTokens.entries()) {
-    if (now > data.expires) {
-      csrfTokens.delete(sessionId);
-    }
+export async function validateCSRFTokenAsync(sessionId: string, token: string): Promise<boolean> {
+  try {
+    const key = `${CSRF_PREFIX}:${sessionId}`;
+    const stored = await redis.get(key);
+    if (!stored) return false;
+    return stored === token;
+  } catch {
+    return false;
   }
 }
 
@@ -74,7 +64,7 @@ export function csrfProtection() {
         '/api/auth/recover-account',
         '/api/orders/sync'  // Excluir sync para load testing
       ];
-              if (excludedEndpoints.includes(path)) {
+      if (excludedEndpoints.includes(path)) {
         await next();
         return;
       }
@@ -89,7 +79,8 @@ export function csrfProtection() {
         }, 403);
       }
       
-      if (!validateCSRFToken(sessionId, csrfToken)) {
+      const isValid = await validateCSRFTokenAsync(sessionId, csrfToken);
+      if (!isValid) {
         return c.json({
           error: 'CSRF token inválido',
           code: 'CSRF_TOKEN_INVALID'

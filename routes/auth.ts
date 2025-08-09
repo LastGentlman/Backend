@@ -120,7 +120,7 @@ auth.post("/login", conditionalAuthRateLimiter(), validateRequest(loginSchema), 
   }
 
   // 🔒 NEW: Check if account is compromised before allowing login
-  if (tokenService.isAccountCompromised(data.user.id)) {
+  if (await tokenService.isAccountCompromisedAsync(data.user.id)) {
     return c.json({
       error: "Cuenta suspendida por seguridad",
       code: "ACCOUNT_COMPROMISED",
@@ -499,7 +499,7 @@ auth.get("/token-stats", async (c) => {
     }
 
     // Get statistics from TokenManagementService
-    const stats = tokenService.getStats();
+    const stats = await tokenService.getStatsAsync();
 
     return c.json({ 
       message: "Token management statistics",

@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '../utils/supabase.ts';
+import { RedisService } from './RedisService.ts';
 
 export interface TokenInfo {
   userId: string;
@@ -15,9 +16,13 @@ export interface CompromisedAccount {
   markedBy: string;
 }
 
-// In production, these should be stored in Redis or a database
-const tokenBlacklist = new Map<string, { blacklistedAt: Date; reason: string }>();
-const compromisedAccounts = new Map<string, CompromisedAccount>();
+// Redis-backed stores
+const redis = RedisService.getInstance();
+const BLACKLIST_SET = 'auth:blacklist';
+const BLACKLIST_META_PREFIX = 'auth:blacklist:meta'; // key per token -> JSON with reason + ts, TTL
+const COMPROMISED_SET = 'auth:compromised';
+const COMPROMISED_META_PREFIX = 'auth:compromised:meta'; // key per user -> JSON
+const BLACKLIST_TTL_SECONDS = 24 * 60 * 60; // 24h cleanup window
 
 export class TokenManagementService {
   private static instance: TokenManagementService;
@@ -80,43 +85,54 @@ export class TokenManagementService {
   /**
    * Checks if a token is blacklisted
    */
-  public isTokenBlacklisted(token: string): boolean {
-    return tokenBlacklist.has(token);
+  public isTokenBlacklisted(_token: string): boolean {
+    // Synchronous path is not possible with Redis; keep a conservative default
+    throw new Error('Use isTokenBlacklistedAsync instead');
+  }
+
+  public async isTokenBlacklistedAsync(token: string): Promise<boolean> {
+    try {
+      return await redis.sismember(BLACKLIST_SET, token);
+    } catch {
+      return false;
+    }
   }
 
   /**
    * Blacklists a token
    */
   public blacklistToken(token: string, reason: string = 'User logout'): void {
-    tokenBlacklist.set(token, {
-      blacklistedAt: new Date(),
-      reason
-    });
-
-    // Clean up old blacklisted tokens (older than 24 hours)
-    this.cleanupBlacklistedTokens();
-    
+    const metaKey = `${BLACKLIST_META_PREFIX}:${token}`;
+    const meta = JSON.stringify({ reason, blacklistedAt: new Date().toISOString() });
+    // Best effort async writes
+    redis.sadd(BLACKLIST_SET, token).catch(() => {});
+    redis.setex(metaKey, BLACKLIST_TTL_SECONDS, meta).catch(() => {});
     console.warn(`🚫 Token blacklisted: ${token.substring(0, 20)}... (${reason})`);
   }
 
   /**
    * Checks if an account is marked as compromised
    */
-  public isAccountCompromised(userId: string): boolean {
-    return compromisedAccounts.has(userId);
+  public isAccountCompromised(_userId: string): boolean {
+    throw new Error('Use isAccountCompromisedAsync instead');
+  }
+
+  public async isAccountCompromisedAsync(userId: string): Promise<boolean> {
+    try {
+      return await redis.sismember(COMPROMISED_SET, userId);
+    } catch {
+      return false;
+    }
   }
 
   /**
    * Marks an account as compromised
    */
   public markAccountAsCompromised(userId: string, reason: string, markedBy: string): void {
-    compromisedAccounts.set(userId, {
-      userId,
-      reason,
-      markedAt: new Date(),
-      markedBy
-    });
-
+    const metaKey = `${COMPROMISED_META_PREFIX}:${userId}`;
+    const meta = JSON.stringify({ userId, reason, markedAt: new Date().toISOString(), markedBy });
+    redis.sadd(COMPROMISED_SET, userId).catch(() => {});
+    redis.set(metaKey, meta).catch(() => {});
     console.warn(`🚨 Account marked as compromised: ${userId} (${reason})`);
   }
 
@@ -124,14 +140,29 @@ export class TokenManagementService {
    * Recovers a compromised account
    */
   public recoverAccount(userId: string): boolean {
-    return compromisedAccounts.delete(userId);
+    const metaKey = `${COMPROMISED_META_PREFIX}:${userId}`;
+    redis.srem(COMPROMISED_SET, userId).catch(() => {});
+    redis.del(metaKey).catch(() => {});
+    return true;
   }
 
   /**
    * Gets compromised account information
    */
-  public getCompromisedAccountInfo(userId: string): CompromisedAccount | undefined {
-    return compromisedAccounts.get(userId);
+  public getCompromisedAccountInfo(_userId: string): CompromisedAccount | undefined {
+    throw new Error('Use getCompromisedAccountInfoAsync instead');
+  }
+
+  public async getCompromisedAccountInfoAsync(userId: string): Promise<CompromisedAccount | undefined> {
+    try {
+      const metaKey = `${COMPROMISED_META_PREFIX}:${userId}`;
+      const raw = await redis.get(metaKey);
+      if (!raw) return undefined;
+      const parsed = JSON.parse(raw);
+      return { ...parsed, markedAt: new Date(parsed.markedAt) } as CompromisedAccount;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -145,7 +176,7 @@ export class TokenManagementService {
   }> {
     try {
       // First, check if token is blacklisted
-      if (this.isTokenBlacklisted(token)) {
+      if (await this.isTokenBlacklistedAsync(token)) {
         return {
           isValid: false,
           error: 'Token revocado',
@@ -175,7 +206,7 @@ export class TokenManagementService {
       }
 
       // Check if account is compromised
-      if (this.isAccountCompromised(user.id)) {
+      if (await this.isAccountCompromisedAsync(user.id)) {
         return {
           isValid: false,
           error: 'Cuenta suspendida por seguridad',
@@ -250,29 +281,35 @@ export class TokenManagementService {
   }
 
   /**
-   * Cleanup old blacklisted tokens (older than 24 hours)
-   */
-  private cleanupBlacklistedTokens(): void {
-    const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 hours ago
-    
-    for (const [token, info] of tokenBlacklist.entries()) {
-      if (info.blacklistedAt < cutoffTime) {
-        tokenBlacklist.delete(token);
-      }
-    }
-  }
-
-  /**
    * Get statistics for monitoring
    */
   public getStats(): {
     blacklistedTokens: number;
     compromisedAccounts: number;
   } {
+    // Return best-effort counts (in-memory returns 0 if unavailable)
     return {
-      blacklistedTokens: tokenBlacklist.size,
-      compromisedAccounts: compromisedAccounts.size
+      blacklistedTokens: 0,
+      compromisedAccounts: 0
     };
+  }
+
+  /**
+   * Get statistics for monitoring (async, accurate via Redis)
+   */
+  public async getStatsAsync(): Promise<{
+    blacklistedTokens: number;
+    compromisedAccounts: number;
+  }> {
+    try {
+      const [bl, ca] = await Promise.all([
+        redis.scard(BLACKLIST_SET),
+        redis.scard(COMPROMISED_SET)
+      ]);
+      return { blacklistedTokens: bl, compromisedAccounts: ca };
+    } catch {
+      return { blacklistedTokens: 0, compromisedAccounts: 0 };
+    }
   }
 }
 

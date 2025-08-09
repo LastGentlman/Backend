@@ -88,6 +88,30 @@ export class RedisService {
     if (!this.isConnected) throw new Error("Redis not connected");
     await (this.redis as InMemoryRedis).srem(key, value);
   }
+
+  // NEW: Increment a numeric key atomically
+  async incr(key: string): Promise<number> {
+    if (!this.isConnected) throw new Error("Redis not connected");
+    return await (this.redis as InMemoryRedis).incr(key);
+  }
+
+  // NEW: Set TTL on a key
+  async expire(key: string, seconds: number): Promise<void> {
+    if (!this.isConnected) throw new Error("Redis not connected");
+    await (this.redis as InMemoryRedis).expire(key, seconds);
+  }
+
+  // NEW: Get remaining TTL (in seconds) for a key, or -1 if none
+  async ttl(key: string): Promise<number> {
+    if (!this.isConnected) throw new Error("Redis not connected");
+    return await (this.redis as InMemoryRedis).ttl(key);
+  }
+
+  // NEW: Get set cardinality
+  async scard(key: string): Promise<number> {
+    if (!this.isConnected) throw new Error("Redis not connected");
+    return await (this.redis as InMemoryRedis).scard(key);
+  }
 }
 
 // Implementación en memoria para desarrollo
@@ -147,5 +171,52 @@ class InMemoryRedis {
     if (set) {
       set.delete(value);
     }
+  }
+
+  // NEW: Atomic increment for counters
+  incr(key: string): number {
+    const item = this.storage.get(key);
+    if (!item) {
+      const value = 1;
+      this.storage.set(key, { value: String(value) });
+      return value;
+    }
+    // Respect expiration
+    if (item.expires && Date.now() > item.expires) {
+      const value = 1;
+      this.storage.set(key, { value: String(value) });
+      return value;
+    }
+    const current = parseInt(item.value, 10) || 0;
+    const next = current + 1;
+    this.storage.set(key, { value: String(next), expires: item.expires });
+    return next;
+  }
+
+  // NEW: Set expiration on an existing key
+  expire(key: string, seconds: number): void {
+    const item = this.storage.get(key);
+    const expires = Date.now() + (seconds * 1000);
+    if (item) {
+      this.storage.set(key, { value: item.value, expires });
+    } else {
+      // Create empty placeholder with expiration if not exists
+      this.storage.set(key, { value: "", expires });
+    }
+  }
+
+  // NEW: Get TTL in seconds; -2 if key does not exist; -1 if no expiration
+  ttl(key: string): number {
+    const item = this.storage.get(key);
+    if (!item) return -2;
+    if (!item.expires) return -1;
+    const ms = item.expires - Date.now();
+    return ms > 0 ? Math.ceil(ms / 1000) : -2;
+  }
+
+  // NEW: Set cardinality
+  scard(key: string): number {
+    const set = this.sets.get(key);
+    return set ? set.size : 0;
   }
 } 

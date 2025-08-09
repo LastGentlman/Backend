@@ -1,20 +1,16 @@
 import { Context, Next } from "hono";
 import { getEnvironmentConfig } from "./config.ts";
+import { RedisService } from "../services/RedisService.ts";
 
 interface RateLimitConfig {
   windowMs: number; // Ventana de tiempo en ms
   maxRequests: number; // Máximo de requests por ventana
 }
 
-interface RateLimitStore {
-  [key: string]: {
-    count: number;
-    resetTime: number;
-    consecutiveFailures: number; // ✅ NEW: Track consecutive failures
-  };
-}
-
-const store: RateLimitStore = {};
+const redis = RedisService.getInstance();
+const RL_PREFIX = "rate_limit";
+const RL_ENHANCED_PREFIX = "enhanced_rate_limit";
+const RL_FAIL_PREFIX = "enhanced_fail";
 
 export function createRateLimiter(config: RateLimitConfig) {
   return async (c: Context, next: Next) => {
@@ -22,48 +18,33 @@ export function createRateLimiter(config: RateLimitConfig) {
                c.req.header("x-real-ip") || 
                "unknown";
     
-    const key = `rate_limit:${ip}`;
-    const now = Date.now();
-    
-    // Limpiar entradas expiradas
-    if (store[key] && now > store[key].resetTime) {
-      delete store[key];
+    const windowSec = Math.ceil(config.windowMs / 1000);
+    const key = `${RL_PREFIX}:${ip}`;
+    const count = await redis.incr(key);
+    // Set expiry if first increment
+    if (count === 1) {
+      await redis.expire(key, windowSec);
     }
+    const ttl = await redis.ttl(key);
+    const retryAfter = ttl > 0 ? ttl : windowSec;
+    const resetDate = new Date(Date.now() + retryAfter * 1000).toISOString();
     
-    // Inicializar o incrementar contador
-    if (!store[key]) {
-      store[key] = {
-        count: 1,
-        resetTime: now + config.windowMs,
-        consecutiveFailures: 0
-      };
-    } else {
-      store[key].count++;
-    }
-    
-    // ✅ NEW: Circuit breaker for consecutive failures
-    if (store[key].consecutiveFailures >= 5) {
-      console.error(`🚨 Circuit breaker activated for IP: ${ip} - Too many consecutive failures`);
-      return c.json({
-        error: "Too many consecutive failures",
-        code: "CIRCUIT_BREAKER_ACTIVATED",
-        retryAfter: Math.ceil((store[key].resetTime - now) / 1000)
-      }, 429);
-    }
-    
-    // Verificar límite
-    if (store[key].count > config.maxRequests) {
+    if (count > config.maxRequests) {
       return c.json({
         error: "Too many requests",
         code: "RATE_LIMIT_EXCEEDED",
-        retryAfter: Math.ceil((store[key].resetTime - now) / 1000)
-      }, 429);
+        retryAfter
+      }, 429, {
+        "X-RateLimit-Limit": String(config.maxRequests),
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": resetDate
+      } as Record<string, string>);
     }
     
     // Agregar headers de rate limit
     c.header("X-RateLimit-Limit", config.maxRequests.toString());
-    c.header("X-RateLimit-Remaining", (config.maxRequests - store[key].count).toString());
-    c.header("X-RateLimit-Reset", new Date(store[key].resetTime).toISOString());
+    c.header("X-RateLimit-Remaining", Math.max(0, config.maxRequests - count).toString());
+    c.header("X-RateLimit-Reset", resetDate);
     
     await next();
   };
@@ -93,48 +74,49 @@ export function createEnhancedRateLimiter(config: RateLimitConfig) {
                "unknown";
     
     const userAgent = c.req.header("user-agent") || "unknown";
-    const key = `enhanced_rate_limit:${ip}:${userAgent}`;
-    const now = Date.now();
-    
-    // Limpiar entradas expiradas
-    if (store[key] && now > store[key].resetTime) {
-      delete store[key];
+    const windowSec = Math.ceil(config.windowMs / 1000);
+    const key = `${RL_ENHANCED_PREFIX}:${ip}:${userAgent}`;
+    const count = await redis.incr(key);
+    if (count === 1) {
+      await redis.expire(key, windowSec);
     }
-    
-    // Inicializar o incrementar contador
-    if (!store[key]) {
-      store[key] = {
-        count: 1,
-        resetTime: now + config.windowMs,
-        consecutiveFailures: 0
-      };
-    } else {
-      store[key].count++;
-    }
-    
-    // Circuit breaker más inteligente
-    if (store[key].consecutiveFailures >= 3) {
+    const ttl = await redis.ttl(key);
+    const retryAfter = ttl > 0 ? ttl : windowSec;
+    const resetDate = new Date(Date.now() + retryAfter * 1000).toISOString();
+
+    // Check failure counter for circuit breaker
+    const failKey = `${RL_FAIL_PREFIX}:${ip}:${userAgent}`;
+    const failCountRaw = await redis.get(failKey);
+    const failCount = parseInt(failCountRaw ?? "0", 10) || 0;
+    if (failCount >= 3) {
       console.error(`🚨 Enhanced circuit breaker for IP: ${ip}, UA: ${userAgent}`);
       return c.json({
         error: "Account temporarily suspended due to repeated failures",
         code: "ENHANCED_CIRCUIT_BREAKER",
-        retryAfter: Math.ceil((store[key].resetTime - now) / 1000)
-      }, 429);
+        retryAfter
+      }, 429, {
+        "X-RateLimit-Limit": String(config.maxRequests),
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": resetDate
+      } as Record<string, string>);
     }
-    
-    // Verificar límite
-    if (store[key].count > config.maxRequests) {
+
+    if (count > config.maxRequests) {
       return c.json({
         error: "Rate limit exceeded",
         code: "ENHANCED_RATE_LIMIT_EXCEEDED",
-        retryAfter: Math.ceil((store[key].resetTime - now) / 1000)
-      }, 429);
+        retryAfter
+      }, 429, {
+        "X-RateLimit-Limit": String(config.maxRequests),
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": resetDate
+      } as Record<string, string>);
     }
     
     // Agregar headers
     c.header("X-RateLimit-Limit", config.maxRequests.toString());
-    c.header("X-RateLimit-Remaining", (config.maxRequests - store[key].count).toString());
-    c.header("X-RateLimit-Reset", new Date(store[key].resetTime).toISOString());
+    c.header("X-RateLimit-Remaining", Math.max(0, config.maxRequests - count).toString());
+    c.header("X-RateLimit-Reset", resetDate);
     
     await next();
   };
@@ -211,16 +193,17 @@ export function smartRateLimiter() {
 
 // ✅ NEW: Function to track failures for circuit breaker
 export function trackFailure(ip: string, userAgent: string = "unknown") {
-  const key = `enhanced_rate_limit:${ip}:${userAgent}`;
-  if (store[key]) {
-    store[key].consecutiveFailures++;
-  }
+  const windowSec = Math.ceil(getEnvironmentConfig().rateLimiting.windowMs / 1000);
+  const failKey = `${RL_FAIL_PREFIX}:${ip}:${userAgent}`;
+  redis.incr(failKey).then((count) => {
+    if (count === 1) {
+      redis.expire(failKey, windowSec).catch(() => {});
+    }
+  }).catch(() => {});
 }
 
 // ✅ NEW: Function to reset failure count on success
 export function resetFailureCount(ip: string, userAgent: string = "unknown") {
-  const key = `enhanced_rate_limit:${ip}:${userAgent}`;
-  if (store[key]) {
-    store[key].consecutiveFailures = 0;
-  }
+  const failKey = `${RL_FAIL_PREFIX}:${ip}:${userAgent}`;
+  redis.del(failKey).catch(() => {});
 } 
