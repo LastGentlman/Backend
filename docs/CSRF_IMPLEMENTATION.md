@@ -45,7 +45,7 @@ Se ha implementado una protección CSRF completa en la aplicación PedidoList, t
 
 #### 1. **Hook CSRF Implementado**
 
-- **Archivo**: `mercury-app/src/hooks/useCSRF.ts`
+- **Archivo**: `pedidolist-app/src/hooks/useCSRF.ts`
 - **Funciones**:
   - `useCSRF()` - Hook para manejar tokens CSRF
   - `useCSRFRequest()` - Hook para hacer peticiones con CSRF

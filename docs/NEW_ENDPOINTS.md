@@ -155,12 +155,12 @@ This document describes the three new API endpoints that have been implemented t
    - Added dashboard routes import
    - Registered dashboard routes with authentication middleware
 
-4. **mercury-app/src/hooks/useDashboardStats.ts** (New)
+4. **pedidolist-app/src/hooks/useDashboardStats.ts** (New)
    - Created React hook for dashboard statistics
    - Includes TypeScript interfaces
    - Handles offline/online state
 
-5. **mercury-app/src/components/Dashboard.tsx**
+5. **pedidolist-app/src/components/Dashboard.tsx**
    - Enhanced with new dashboard stats
    - Added growth indicators
    - Fallback to local calculations when API unavailable

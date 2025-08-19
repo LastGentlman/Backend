@@ -87,7 +87,7 @@ export function logXSSAttempt(
 }
 ```
 
-#### Frontend Logging (`mercury-app/src/lib/security.ts`)
+#### Frontend Logging (`pedidolist-app/src/lib/security.ts`)
 
 ```typescript
 function logXSSAttempt(
@@ -159,7 +159,7 @@ monitoring.get("/security/health", async (c) => {
 
 ## 🧪 Comprehensive Testing
 
-### Enhanced Test Suite (`mercury-app/src/utils/security-enhanced.test.ts`)
+### Enhanced Test Suite (`pedidolist-app/src/utils/security-enhanced.test.ts`)
 
 - **25+ XSS payloads** tested comprehensively
 - **Context tracking** verification
@@ -216,7 +216,7 @@ describe('Enhanced Security Functions with XSS Logging', () => {
 
 ### Frontend Integration
 
-1. **SafeContent Component** (`mercury-app/src/components/ui/safe-content.tsx`):
+1. **SafeContent Component** (`pedidolist-app/src/components/ui/safe-content.tsx`):
 
    ```typescript
    export const SafeContent: React.FC<SafeContentProps> = ({
