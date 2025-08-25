@@ -207,6 +207,73 @@ auth.post("/resend-confirmation", async (c) => {
   }
 });
 
+// Change email for unconfirmed user
+auth.post("/change-email", async (c) => {
+  try {
+    const { currentEmail, newEmail } = await c.req.json();
+    const supabase = getSupabaseClient();
+
+    // Get user by current email
+    const { data: { users }, error: userError } = await supabase.auth.admin.listUsers();
+    
+    if (userError) {
+      return c.json({ error: userError.message }, 500);
+    }
+
+    const user = users.find(u => u.email === currentEmail);
+    if (!user) {
+      return c.json({ error: "User not found" }, 404);
+    }
+
+    // Check if user is already confirmed
+    if (user.email_confirmed_at) {
+      return c.json({ 
+        error: "Cannot change email for confirmed users",
+        code: "USER_ALREADY_CONFIRMED"
+      }, 400);
+    }
+
+    // Check if new email is already in use
+    const existingUser = users.find(u => u.email === newEmail);
+    if (existingUser) {
+      return c.json({ 
+        error: "Email already in use",
+        code: "EMAIL_ALREADY_EXISTS"
+      }, 409);
+    }
+
+    // Update user email
+    const { error: updateError } = await supabase.auth.admin.updateUserById(
+      user.id,
+      { email: newEmail }
+    );
+
+    if (updateError) {
+      return c.json({ error: updateError.message }, 500);
+    }
+
+    // Send confirmation email to new address
+    const { error: resendError } = await supabase.auth.resend({
+      type: 'signup',
+      email: newEmail
+    });
+
+    if (resendError) {
+      return c.json({ error: resendError.message }, 500);
+    }
+
+    return c.json({
+      message: "Email changed successfully. Confirmation email sent to new address.",
+      code: "EMAIL_CHANGED",
+      newEmail
+    });
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to change email";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
 // Get current user profile
 auth.get("/profile", async (c) => {
   try {
