@@ -8,6 +8,10 @@ import { z } from "zod";
 import { validateRequest, getValidatedData } from "../middleware/validation.ts";
 import { strongPasswordSchema, validatePassword } from "../utils/passwordSecurity.ts";
 import { SecureLogger } from "../utils/secureLogger.ts";
+import { authMiddleware } from "../middleware/auth.ts";
+import { getEmployeeFromContext, getUserFromContext } from "../types/context.ts";
+import { emailNotificationService } from "../services/EmailNotificationService.ts";
+import { dataExportService } from "../services/DataExportService.ts";
 
 const registerSchema = z.object({
   email: z.string().email().max(255),
@@ -596,6 +600,499 @@ auth.get("/csrf/token", csrfTokenGenerator(), (c) => {
     message: 'Token CSRF generado exitosamente',
     sessionId
   });
+});
+
+// 🔒 NEW: Delete user account endpoint
+auth.delete("/account", authMiddleware, async (c) => {
+  try {
+    const user = getUserFromContext(c);
+    const employee = getEmployeeFromContext(c);
+    
+    if (!user) {
+      return c.json({ 
+        error: "Usuario no autenticado",
+        code: "UNAUTHORIZED"
+      }, 401);
+    }
+
+    const supabase = getSupabaseClient();
+
+    // 🔒 SECURITY: Check if user has pending orders or active business
+    if (employee) {
+      // Check for pending orders
+      const { data: pendingOrders, error: ordersError } = await supabase
+        .from('orders')
+        .select('id, status')
+        .eq('business_id', employee.business_id)
+        .in('status', ['pending', 'confirmed', 'in_progress']);
+
+      if (ordersError) {
+        console.error('Error checking pending orders:', ordersError);
+        return c.json({ 
+          error: "Error al verificar pedidos pendientes",
+          code: "ORDERS_CHECK_ERROR"
+        }, 500);
+      }
+
+      if (pendingOrders && pendingOrders.length > 0) {
+        return c.json({ 
+          error: "No puedes eliminar tu cuenta mientras tengas pedidos pendientes",
+          code: "PENDING_ORDERS_EXIST",
+          pendingOrders: pendingOrders.length
+        }, 400);
+      }
+
+      // Check if user is the only owner of the business
+      if (employee.role === 'owner') {
+        const { data: otherOwners, error: ownersError } = await supabase
+          .from('employees')
+          .select('id, user_id')
+          .eq('business_id', employee.business_id)
+          .eq('role', 'owner')
+          .eq('is_active', true);
+
+        if (ownersError) {
+          console.error('Error checking business owners:', ownersError);
+          return c.json({ 
+            error: "Error al verificar propietarios del negocio",
+            code: "OWNERS_CHECK_ERROR"
+          }, 500);
+        }
+
+        if (otherOwners && otherOwners.length === 1 && otherOwners[0].user_id === user.id) {
+          return c.json({ 
+            error: "No puedes eliminar tu cuenta si eres el único propietario del negocio. Transfiere la propiedad o elimina el negocio primero.",
+            code: "SOLE_OWNER_CANNOT_DELETE"
+          }, 400);
+        }
+      }
+    }
+
+    // 🔒 SECURITY: Log the account deletion attempt
+    console.warn(`🗑️ Account deletion requested for user: ${user.email} (${user.id})`);
+
+    // 📋 COMPLIANCE: Get user statistics for logging
+    let userStats = { total_orders: 0, account_age_days: 0 };
+    try {
+      const { data: stats } = await supabase.rpc('get_user_deletion_stats', { p_user_id: user.id });
+      if (stats && stats.length > 0) {
+        userStats = stats[0];
+      }
+    } catch (statsError) {
+      console.warn('Warning: Could not get user stats for logging:', statsError);
+    }
+
+    // 📊 COMPLIANCE: Export user data before deletion
+    let exportData = null;
+    try {
+      exportData = await dataExportService.exportUserData(user.id, {
+        includeOrders: true,
+        includeBusinessData: !!employee,
+        format: 'json',
+        compress: false
+      });
+      console.log(`📊 Data export completed for user: ${user.email}`);
+    } catch (exportError) {
+      console.warn('Warning: Could not export user data:', exportError);
+    }
+
+    // 📋 COMPLIANCE: Log deletion to compliance table
+    try {
+      const { error: logError } = await supabase
+        .from('account_deletion_logs')
+        .insert({
+          user_id: user.id,
+          user_email: user.email,
+          business_id: employee?.business_id || null,
+          business_name: null, // Will be populated from business table if needed
+          user_role: employee?.role || null,
+          deletion_reason: 'self_deletion',
+          total_orders: userStats.total_orders,
+          account_age_days: userStats.account_age_days,
+          ip_address: c.req.header('x-forwarded-for') || c.req.header('x-real-ip'),
+          user_agent: c.req.header('user-agent'),
+          deletion_method: 'self_deletion',
+          grace_period_start: new Date().toISOString(),
+          grace_period_end: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(), // 90 days
+          data_exported: !!exportData,
+          data_export_path: exportData?.file_path || null
+        });
+
+      if (logError) {
+        console.error('Error logging deletion to compliance table:', logError);
+      } else {
+        console.log(`📋 Compliance log created for user: ${user.email}`);
+      }
+    } catch (logError) {
+      console.error('Error creating compliance log:', logError);
+    }
+
+    // 🗑️ STEP 1: Delete user's avatar files from storage
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('avatar_url')
+        .eq('id', user.id)
+        .single();
+
+      if (profile?.avatar_url) {
+        const avatarPath = profile.avatar_url.split('/').pop();
+        if (avatarPath) {
+          await supabase.storage
+            .from('avatars')
+            .remove([avatarPath]);
+        }
+      }
+    } catch (storageError) {
+      console.warn('Warning: Could not delete avatar files:', storageError);
+      // Continue with account deletion even if avatar deletion fails
+    }
+
+    // 🗑️ STEP 2: Soft delete employee record (if exists)
+    if (employee) {
+      const { error: employeeError } = await supabase
+        .from('employees')
+        .update({ is_active: false })
+        .eq('user_id', user.id);
+
+      if (employeeError) {
+        console.error('Error soft deleting employee:', employeeError);
+        return c.json({ 
+          error: "Error al eliminar datos del empleado",
+          code: "EMPLOYEE_DELETE_ERROR"
+        }, 500);
+      }
+    }
+
+    // 🗑️ STEP 3: Soft delete profile data
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ 
+        is_active: false,
+        deleted_at: new Date().toISOString()
+      })
+      .eq('id', user.id);
+
+    if (profileError) {
+      console.error('Error soft deleting profile:', profileError);
+      return c.json({ 
+        error: "Error al eliminar perfil",
+        code: "PROFILE_DELETE_ERROR"
+      }, 500);
+    }
+
+    // 🗑️ STEP 4: Blacklist all user tokens
+    await tokenService.forceLogoutUser(user.id, 'Account deletion', user.id);
+
+    // 🗑️ STEP 5: Delete user from Supabase Auth
+    const { error: authError } = await supabase.auth.admin.deleteUser(user.id);
+    
+    if (authError) {
+      console.error('Error deleting user from auth:', authError);
+      return c.json({ 
+        error: "Error al eliminar cuenta de autenticación",
+        code: "AUTH_DELETE_ERROR"
+      }, 500);
+    }
+
+    // ✅ SUCCESS: Log successful deletion
+    console.log(`✅ Account successfully deleted for user: ${user.email} (${user.id})`);
+
+    // 📧 EMAIL: Send notification to business owner if employee
+    if (employee) {
+      try {
+        await emailNotificationService.notifyOwnerOfAccountDeletion({
+          userEmail: employee.business_id ? 'owner@business.com' : user.email, // Send to business owner
+          userName: user.email,
+          businessName: employee.business_id ? 'Business Name' : undefined,
+          userRole: employee.role,
+          deletionDate: new Date().toISOString(),
+          totalOrders: userStats.total_orders,
+          accountAge: userStats.account_age_days
+        });
+      } catch (emailError) {
+        console.warn('Warning: Could not send account deletion email notification:', emailError);
+      }
+    }
+
+    return c.json({ 
+      message: "Cuenta eliminada exitosamente",
+      code: "ACCOUNT_DELETED_SUCCESS",
+      userId: user.id,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Unexpected error in DELETE /auth/account:', error);
+    return c.json({ 
+      error: "Error interno del servidor",
+      code: "INTERNAL_SERVER_ERROR",
+      details: error instanceof Error ? error.message : "Error desconocido"
+    }, 500);
+  }
+});
+
+// 🔄 NEW: Recover account during grace period
+auth.post("/account/recover", async (c) => {
+  try {
+    const { email } = await c.req.json();
+    
+    if (!email) {
+      return c.json({ 
+        error: "Email requerido",
+        code: "EMAIL_REQUIRED"
+      }, 400);
+    }
+
+    const supabase = getSupabaseClient();
+
+    // Check if account is in grace period
+    const { data: deletionLog, error: logError } = await supabase
+      .from('account_deletion_logs')
+      .select('*')
+      .eq('user_email', email)
+      .eq('deletion_method', 'self_deletion')
+      .gte('grace_period_end', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (logError || !deletionLog) {
+      return c.json({ 
+        error: "Cuenta no encontrada o período de gracia expirado",
+        code: "ACCOUNT_NOT_FOUND_OR_EXPIRED"
+      }, 404);
+    }
+
+    // Check if grace period has expired
+    const gracePeriodEnd = new Date(deletionLog.grace_period_end);
+    const now = new Date();
+    
+    if (now > gracePeriodEnd) {
+      return c.json({ 
+        error: "Período de gracia expirado. La cuenta ya no puede ser recuperada.",
+        code: "GRACE_PERIOD_EXPIRED",
+        grace_period_end: deletionLog.grace_period_end
+      }, 400);
+    }
+
+    // Recover the account
+    try {
+      // 1. Reactivate profile
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ 
+          is_active: true,
+          deleted_at: null
+        })
+        .eq('id', deletionLog.user_id);
+
+      if (profileError) {
+        console.error('Error reactivating profile:', profileError);
+        return c.json({ 
+          error: "Error al reactivar perfil",
+          code: "PROFILE_RECOVERY_ERROR"
+        }, 500);
+      }
+
+      // 2. Reactivate employee record if exists
+      if (deletionLog.business_id) {
+        const { error: employeeError } = await supabase
+          .from('employees')
+          .update({ 
+            is_active: true,
+            disassociated_at: null,
+            disassociated_by: null
+          })
+          .eq('user_id', deletionLog.user_id)
+          .eq('business_id', deletionLog.business_id);
+
+        if (employeeError) {
+          console.warn('Warning: Could not reactivate employee record:', employeeError);
+        }
+      }
+
+      // 3. Remove from deletion logs (or mark as recovered)
+      const { error: logUpdateError } = await supabase
+        .from('account_deletion_logs')
+        .update({ 
+          data_exported: true, // Mark as recovered
+          data_export_path: 'account_recovered'
+        })
+        .eq('id', deletionLog.id);
+
+      if (logUpdateError) {
+        console.warn('Warning: Could not update deletion log:', logUpdateError);
+      }
+
+      // 4. Log the recovery
+      console.log(`✅ Account recovered for user: ${email} (${deletionLog.user_id})`);
+
+      // 📧 EMAIL: Send recovery confirmation
+      try {
+        await emailNotificationService.sendAccountRecoveryConfirmation({
+          userEmail: email,
+          userName: email.split('@')[0], // Simple name extraction
+          businessName: deletionLog.business_name,
+          userRole: deletionLog.user_role,
+          deletionDate: deletionLog.created_at
+        });
+      } catch (emailError) {
+        console.warn('Warning: Could not send account recovery email notification:', emailError);
+      }
+
+      return c.json({ 
+        message: "Cuenta recuperada exitosamente",
+        code: "ACCOUNT_RECOVERED",
+        user_id: deletionLog.user_id,
+        grace_period_remaining: Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) + " días"
+      });
+
+    } catch (recoveryError) {
+      console.error('Error during account recovery:', recoveryError);
+      return c.json({ 
+        error: "Error durante la recuperación de la cuenta",
+        code: "RECOVERY_ERROR"
+      }, 500);
+    }
+
+  } catch (error) {
+    console.error('Unexpected error in POST /auth/account/recover:', error);
+    return c.json({ 
+      error: "Error interno del servidor",
+      code: "INTERNAL_SERVER_ERROR"
+    }, 500);
+  }
+});
+
+// 🔍 NEW: Check account recovery status
+auth.get("/account/recovery-status/:email", async (c) => {
+  try {
+    const email = c.req.param('email');
+    
+    if (!email) {
+      return c.json({ 
+        error: "Email requerido",
+        code: "EMAIL_REQUIRED"
+      }, 400);
+    }
+
+    const supabase = getSupabaseClient();
+
+    // Check if account is in grace period
+    const { data: deletionLog, error: logError } = await supabase
+      .from('account_deletion_logs')
+      .select('*')
+      .eq('user_email', email)
+      .eq('deletion_method', 'self_deletion')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (logError || !deletionLog) {
+      return c.json({ 
+        can_recover: false,
+        reason: "Cuenta no encontrada o ya recuperada"
+      });
+    }
+
+    // Check if grace period has expired
+    const gracePeriodEnd = new Date(deletionLog.grace_period_end);
+    const now = new Date();
+    const canRecover = now <= gracePeriodEnd;
+    
+    const daysRemaining = canRecover 
+      ? Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+      : 0;
+
+    return c.json({
+      can_recover: canRecover,
+      deletion_date: deletionLog.created_at,
+      grace_period_end: deletionLog.grace_period_end,
+      days_remaining: daysRemaining,
+      business_name: deletionLog.business_name,
+      user_role: deletionLog.user_role,
+      reason: canRecover 
+        ? `Puedes recuperar tu cuenta. Quedan ${daysRemaining} días.`
+        : "Período de gracia expirado. La cuenta ya no puede ser recuperada."
+    });
+
+  } catch (error) {
+    console.error('Unexpected error in GET /auth/account/recovery-status/:email:', error);
+    return c.json({ 
+      error: "Error interno del servidor",
+      code: "INTERNAL_SERVER_ERROR"
+    }, 500);
+  }
+});
+
+// 📊 NEW: Download exported user data
+auth.get("/account/export/:userId", authMiddleware, async (c) => {
+  try {
+    const user = getUserFromContext(c);
+    const employee = getEmployeeFromContext(c);
+    const requestedUserId = c.req.param('userId');
+    
+    if (!user) {
+      return c.json({ 
+        error: "Usuario no autenticado",
+        code: "UNAUTHORIZED"
+      }, 401);
+    }
+
+    // Only allow users to download their own data or business owners to download employee data
+    if (user.id !== requestedUserId && (!employee || employee.role !== 'owner')) {
+      return c.json({ 
+        error: "No tienes permisos para descargar estos datos",
+        code: "INSUFFICIENT_PERMISSIONS"
+      }, 403);
+    }
+
+    const supabase = getSupabaseClient();
+
+    // Get the most recent export for this user
+    const { data: deletionLog, error: logError } = await supabase
+      .from('account_deletion_logs')
+      .select('*')
+      .eq('user_id', requestedUserId)
+      .eq('data_exported', true)
+      .not('data_export_path', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (logError || !deletionLog || !deletionLog.data_export_path) {
+      return c.json({ 
+        error: "No se encontraron datos exportados para este usuario",
+        code: "EXPORT_NOT_FOUND"
+      }, 404);
+    }
+
+    // Get the exported data
+    const exportContent = await dataExportService.getExportFile(deletionLog.data_export_path);
+    
+    if (!exportContent) {
+      return c.json({ 
+        error: "El archivo de exportación no se encuentra",
+        code: "EXPORT_FILE_NOT_FOUND"
+      }, 404);
+    }
+
+    // Return the file
+    return new Response(exportContent, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Disposition': `attachment; filename="user_data_${requestedUserId}_${deletionLog.created_at.split('T')[0]}.json"`
+      }
+    });
+
+  } catch (error) {
+    console.error('Unexpected error in GET /auth/account/export/:userId:', error);
+    return c.json({ 
+      error: "Error interno del servidor",
+      code: "INTERNAL_SERVER_ERROR"
+    }, 500);
+  }
 });
 
 export default auth; 

@@ -2,11 +2,12 @@ import { Hono } from "hono";
 import { getSupabaseClient } from "../utils/supabase.ts";
 import { requireOwner, requireAdminOrOwner } from "../middleware/auth.ts";
 import { getBusinessFromContext, getEmployeeFromContext, getUserFromContext } from "../types/context.ts";
+import { emailNotificationService } from "../services/EmailNotificationService.ts";
 import { getStripeClient } from "../utils/stripe.ts";
 import { getTaxRegimeByCode, isValidTaxRegime as _isValidTaxRegime } from "../utils/taxRegimes.ts";
 import { validateData, employeeInvitationSchema, trialActivationSchema, businessSettingsUpdateSchema } from "../utils/validation.ts";
 import type { TrialActivationRequest as _TrialActivationRequest, TrialActivationResponse } from "../types/business.ts";
-import type { Price } from "../types/stripe.ts";
+import type { Price as _Price } from "../types/stripe.ts";
 
 const business = new Hono();
 
@@ -69,7 +70,7 @@ business.post("/activate-trial", async (c) => {
 
     // 2. Procesar método de pago si se proporciona
     let paymentMethodId: string | undefined;
-    if (validatedData.paymentMethod) {
+    if (validatedData.paymentMethod && validatedData.paymentMethod.card) {
       try {
         const paymentMethod = await stripe.createPaymentMethod(
           validatedData.paymentMethod.type,
@@ -243,9 +244,9 @@ business.get("/prices", async (c) => {
     
     return c.json({
       success: true,
-      prices: prices.data.map((price: Price) => ({
+      prices: prices.data.map((price) => ({
         id: price.id,
-        nickname: price.nickname,
+        nickname: price.nickname || undefined,
         unit_amount: price.unit_amount,
         currency: price.currency,
         recurring: price.recurring,
@@ -528,5 +529,161 @@ business.get("/stats", requireAdminOrOwner, async (c) => {
     }
   });
 });
+
+// 🔄 NEW: Employee disassociation endpoint (when employee leaves business)
+business.post("/employees/:employeeId/disassociate", requireAdminOrOwner, async (c) => {
+  try {
+    const business = getBusinessFromContext(c);
+    const user = getUserFromContext(c);
+    const employeeId = c.req.param('employeeId');
+    
+    if (!business || !user) {
+      return c.json({ 
+        error: 'Contexto de negocio y usuario requerido',
+        code: 'CONTEXT_REQUIRED'
+      }, 400);
+    }
+
+    const supabase = getSupabaseClient();
+
+    // Get employee to disassociate
+    const { data: employeeToDisassociate, error: fetchError } = await supabase
+      .from('employees')
+      .select(`
+        *,
+        profile:profiles(email, name)
+      `)
+      .eq('id', employeeId)
+      .eq('business_id', business.id)
+      .eq('is_active', true)
+      .single();
+
+    if (fetchError || !employeeToDisassociate) {
+      return c.json({ 
+        error: 'Empleado no encontrado o ya desvinculado',
+        code: 'EMPLOYEE_NOT_FOUND'
+      }, 404);
+    }
+
+    // Prevent disassociating the last owner
+    if (employeeToDisassociate.role === 'owner') {
+      const { data: otherOwners, error: ownersError } = await supabase
+        .from('employees')
+        .select('id')
+        .eq('business_id', business.id)
+        .eq('role', 'owner')
+        .eq('is_active', true);
+
+      if (ownersError) {
+        return c.json({ 
+          error: 'Error al verificar propietarios',
+          code: 'OWNERS_CHECK_ERROR'
+        }, 500);
+      }
+
+      if (otherOwners && otherOwners.length === 1) {
+        return c.json({ 
+          error: 'No puedes desvincular al único propietario del negocio',
+          code: 'LAST_OWNER_CANNOT_DISASSOCIATE'
+        }, 400);
+      }
+    }
+
+    // Soft delete employee (disassociate)
+    const { error: disassociateError } = await supabase
+      .from('employees')
+      .update({ 
+        is_active: false,
+        disassociated_at: new Date().toISOString(),
+        disassociated_by: user.id
+      })
+      .eq('id', employeeId);
+
+    if (disassociateError) {
+      return c.json({ 
+        error: 'Error al desvincular empleado',
+        code: 'DISASSOCIATE_ERROR'
+      }, 500);
+    }
+
+    // 📧 NOTIFICATION: Notify business owner about disassociation
+    try {
+      await notifyOwnerOfDisassociation({
+        employeeEmail: employeeToDisassociate.profile?.email || 'unknown',
+        employeeName: employeeToDisassociate.profile?.name || 'unknown',
+        employeeRole: employeeToDisassociate.role,
+        businessName: business.name,
+        disassociatedBy: user.email || 'unknown',
+        disassociationDate: new Date().toISOString()
+      });
+    } catch (notificationError) {
+      console.warn('Warning: Could not send disassociation notification:', notificationError);
+    }
+
+    // 📋 COMPLIANCE: Log disassociation for compliance
+    try {
+      await supabase
+        .from('account_deletion_logs')
+        .insert({
+          user_id: employeeToDisassociate.user_id,
+          user_email: employeeToDisassociate.profile?.email || 'unknown',
+          business_id: business.id,
+          business_name: business.name,
+          user_role: employeeToDisassociate.role,
+          deletion_reason: 'employee_disassociation',
+          deletion_method: 'admin_disassociation',
+          ip_address: c.req.header('x-forwarded-for') || c.req.header('x-real-ip'),
+          user_agent: c.req.header('user-agent'),
+          grace_period_start: new Date().toISOString(),
+          grace_period_end: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString() // 90 days
+        });
+    } catch (logError) {
+      console.warn('Warning: Could not log disassociation for compliance:', logError);
+    }
+
+    return c.json({ 
+      message: 'Empleado desvinculado exitosamente',
+      code: 'EMPLOYEE_DISASSOCIATED',
+      employee: {
+        id: employeeToDisassociate.id,
+        email: employeeToDisassociate.profile?.email,
+        role: employeeToDisassociate.role
+      }
+    });
+
+  } catch (error) {
+    console.error('Unexpected error in POST /business/employees/:employeeId/disassociate:', error);
+    return c.json({ 
+      error: 'Error interno del servidor',
+      code: 'INTERNAL_SERVER_ERROR'
+    }, 500);
+  }
+});
+
+// Helper function to notify owner of employee disassociation
+async function notifyOwnerOfDisassociation(data: {
+  employeeEmail: string;
+  employeeName: string;
+  employeeRole: string;
+  businessName: string;
+  disassociatedBy: string;
+  disassociationDate: string;
+}) {
+  // Send email notification to business owner
+  try {
+    await emailNotificationService.notifyOwnerOfEmployeeDisassociation({
+      userEmail: data.employeeEmail,
+      userName: data.employeeName,
+      businessName: data.businessName,
+      userRole: data.employeeRole,
+      deletionDate: data.disassociationDate
+    });
+  } catch (emailError) {
+    console.warn('Warning: Could not send disassociation email notification:', emailError);
+  }
+  
+  // Also log for debugging
+  console.log(`📧 Disassociation notification: ${data.employeeEmail} (${data.employeeRole}) left ${data.businessName}`);
+}
 
 export default business; 
