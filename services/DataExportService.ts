@@ -227,16 +227,27 @@ export class DataExportService {
    */
   private async saveToS3(filePath: string, content: string): Promise<void> {
     try {
-      // TODO: Implement AWS S3 upload
-      // const s3Client = new S3Client({ region: Deno.env.get('AWS_REGION') });
-      // await s3Client.send(new PutObjectCommand({
-      //   Bucket: Deno.env.get('S3_BUCKET'),
-      //   Key: `exports/${filePath}`,
-      //   Body: content
-      // }));
+      const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
       
-      console.log(`☁️ File would be saved to S3: ${filePath}`);
-      console.log(`   Content length: ${content.length} characters`);
+      const s3Client = new S3Client({ 
+        region: Deno.env.get('AWS_REGION') || 'us-east-1',
+        credentials: {
+          accessKeyId: Deno.env.get('AWS_ACCESS_KEY_ID') || '',
+          secretAccessKey: Deno.env.get('AWS_SECRET_ACCESS_KEY') || ''
+        }
+      });
+
+      const fileName = filePath.split('/').pop() || 'export.json';
+      const key = `exports/${fileName}`;
+
+      await s3Client.send(new PutObjectCommand({
+        Bucket: Deno.env.get('S3_BUCKET') || 'pedidolist-users-backup',
+        Key: key,
+        Body: content,
+        ContentType: 'application/json'
+      }));
+      
+      console.log(`☁️ File saved to S3: s3://${Deno.env.get('S3_BUCKET')}/${key}`);
     } catch (error) {
       console.error('Error saving to S3:', error);
       throw error;
