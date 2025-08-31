@@ -404,6 +404,136 @@ auth.post("/logout", async (c) => {
   }
 });
 
+// 🔒 NEW: Change password endpoint
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Contraseña actual requerida"),
+  newPassword: strongPasswordSchema,
+  confirmPassword: z.string().min(1, "Confirmación de contraseña requerida")
+});
+
+auth.post("/change-password", authMiddleware, validateRequest(changePasswordSchema), async (c) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = getValidatedData<typeof changePasswordSchema._type>(c);
+    const user = getUserFromContext(c);
+    const logger = SecureLogger.getInstance();
+
+    if (!user) {
+      return c.json({ 
+        error: "Usuario no autenticado",
+        code: "UNAUTHORIZED"
+      }, 401);
+    }
+
+    // Validate password confirmation
+    if (newPassword !== confirmPassword) {
+      return c.json({
+        error: "Las contraseñas no coinciden",
+        code: "PASSWORD_MISMATCH"
+      }, 400);
+    }
+
+    // Validate new password strength
+    const passwordValidation = validatePassword(newPassword);
+    if (!passwordValidation.isValid) {
+      logger.logSecurityEvent({
+        level: 'warning',
+        message: 'Weak password attempt during password change',
+        data: { 
+          userId: user.id,
+          email: user.email,
+          strength: passwordValidation.strength,
+          errors: passwordValidation.errors
+        },
+        userId: user.id,
+        ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+      });
+
+      return c.json({
+        error: "Contraseña débil",
+        details: passwordValidation.errors,
+        strength: passwordValidation.strength
+      }, 400);
+    }
+
+    const supabase = getSupabaseClient();
+
+    // Verify current password
+    const { data: { user: authUser }, error: verifyError } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password: currentPassword
+    });
+
+    if (verifyError || !authUser) {
+      logger.logSecurityEvent({
+        level: 'warning',
+        message: 'Invalid current password during password change',
+        data: { 
+          userId: user.id,
+          email: user.email
+        },
+        userId: user.id,
+        ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+      });
+
+      return c.json({
+        error: "Contraseña actual incorrecta",
+        code: "INVALID_CURRENT_PASSWORD"
+      }, 400);
+    }
+
+    // Update password using Supabase Admin API
+    const { error: updateError } = await supabase.auth.admin.updateUserById(
+      user.id,
+      { password: newPassword }
+    );
+
+    if (updateError) {
+      logger.logSecurityEvent({
+        level: 'error',
+        message: 'Password update failed',
+        data: { 
+          userId: user.id,
+          email: user.email,
+          error: updateError.message
+        },
+        userId: user.id,
+        ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+      });
+
+      return c.json({
+        error: "Error al actualizar la contraseña",
+        code: "PASSWORD_UPDATE_ERROR"
+      }, 500);
+    }
+
+    // 🔒 NEW: Blacklist all user tokens to force re-login
+    await tokenService.forceLogoutUser(user.id, 'Password changed', user.id);
+
+    // Log successful password change
+    logger.logSecurityEvent({
+      level: 'info',
+      message: 'Password changed successfully',
+      data: { 
+        userId: user.id,
+        email: user.email,
+        strength: passwordValidation.strength.score
+      },
+      userId: user.id,
+      ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+    });
+
+    return c.json({
+      message: "Contraseña actualizada exitosamente. Debes iniciar sesión nuevamente.",
+      code: "PASSWORD_CHANGED_SUCCESS",
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Error al cambiar contraseña";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
 // 🔒 NEW: Force logout for compromised accounts (admin only)
 auth.post("/force-logout/:userId", async (c) => {
   try {
