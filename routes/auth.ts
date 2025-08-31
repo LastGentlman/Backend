@@ -1095,4 +1095,107 @@ auth.get("/account/export/:userId", authMiddleware, async (c) => {
   }
 });
 
+// 🎯 NEW: Token verification endpoint for offline authentication
+const verifyTokenSchema = z.object({
+  token: z.string().min(1)
+});
+
+auth.post("/verify-token", validateRequest(verifyTokenSchema), async (c) => {
+  try {
+    const { token } = getValidatedData<typeof verifyTokenSchema._type>(c);
+    const logger = SecureLogger.getInstance();
+
+    // 🔒 ENHANCED: Use TokenManagementService for comprehensive validation
+    const validationResult = await tokenService.validateToken(token);
+    
+    if (!validationResult.isValid) {
+      // 🔒 NEW: Log security event for invalid token verification
+      logger.logSecurityEvent({
+        level: 'warning',
+        message: 'Invalid token verification attempt',
+        data: { 
+          reason: validationResult.error || 'Token inválido',
+          code: validationResult.code || 'AUTH_TOKEN_INVALID'
+        },
+        ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+      });
+
+      return c.json({ 
+        valid: false,
+        error: validationResult.error || 'Token inválido',
+        code: validationResult.code || 'AUTH_TOKEN_INVALID'
+      }, 401);
+    }
+
+    // 🔒 NEW: Log successful token verification
+    logger.logSecurityEvent({
+      level: 'info',
+      message: 'Token verification successful',
+      data: { 
+        userId: validationResult.user?.id,
+        email: validationResult.user?.email
+      },
+      userId: validationResult.user?.id,
+      ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+    });
+
+    return c.json({ 
+      valid: true,
+      user: validationResult.user
+    });
+
+  } catch (error) {
+    console.error('❌ Token verification error:', error);
+    return c.json({ 
+      valid: false,
+      error: 'Error interno de verificación',
+      code: 'AUTH_INTERNAL_ERROR'
+    }, 500);
+  }
+});
+
+// 🎯 NEW: Heartbeat endpoint for offline-aware authentication
+const heartbeatSchema = z.object({
+  timestamp: z.number(),
+  userAgent: z.string().optional()
+});
+
+auth.post("/heartbeat", authMiddleware, validateRequest(heartbeatSchema), (c) => {
+  try {
+    const { timestamp, userAgent } = getValidatedData<typeof heartbeatSchema._type>(c);
+    const user = getUserFromContext(c);
+    const logger = SecureLogger.getInstance();
+
+    // 🔒 NEW: Log heartbeat event
+    logger.logSecurityEvent({
+      level: 'info',
+      message: 'Heartbeat received',
+      data: { 
+        timestamp,
+        userAgent: userAgent || 'unknown',
+        latency: Date.now() - timestamp
+      },
+      userId: user?.id,
+      ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+    });
+
+    return c.json({ 
+      success: true,
+      timestamp: Date.now(),
+      user: {
+        id: user?.id,
+        email: user?.email
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Heartbeat error:', error);
+    return c.json({ 
+      success: false,
+      error: 'Error interno del heartbeat',
+      code: 'HEARTBEAT_INTERNAL_ERROR'
+    }, 500);
+  }
+});
+
 export default auth; 
