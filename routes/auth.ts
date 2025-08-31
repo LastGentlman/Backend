@@ -1328,4 +1328,128 @@ auth.post("/heartbeat", authMiddleware, validateRequest(heartbeatSchema), (c) =>
   }
 });
 
+// 🔒 NEW: Set password endpoint for OAuth users
+const setPasswordSchema = z.object({
+  newPassword: strongPasswordSchema,
+  confirmPassword: z.string().min(1, "Confirmación de contraseña requerida")
+});
+
+auth.post("/set-password", authMiddleware, validateRequest(setPasswordSchema), async (c) => {
+  try {
+    const { newPassword, confirmPassword } = getValidatedData<typeof setPasswordSchema._type>(c);
+    const user = getUserFromContext(c);
+    const logger = SecureLogger.getInstance();
+
+    if (!user) {
+      return c.json({ 
+        error: "Usuario no autenticado",
+        code: "UNAUTHORIZED"
+      }, 401);
+    }
+
+    // Validate password confirmation
+    if (newPassword !== confirmPassword) {
+      return c.json({
+        error: "Las contraseñas no coinciden",
+        code: "PASSWORD_MISMATCH"
+      }, 400);
+    }
+
+    // Check if user is OAuth user (shouldn't have password already)
+    const supabase = getSupabaseClient();
+    const { data: userData, error: userError } = await supabase.auth.admin.getUserById(user.id);
+    
+    if (userError || !userData.user) {
+      return c.json({
+        error: "Error obteniendo información del usuario",
+        code: "USER_NOT_FOUND"
+      }, 404);
+    }
+
+    // Check if user already has a password (traditional user)
+    const isOAuthUser = userData.user.app_metadata?.provider !== 'email';
+    
+    if (!isOAuthUser) {
+      return c.json({
+        error: "Este usuario ya tiene una contraseña. Usa el endpoint de cambiar contraseña.",
+        code: "PASSWORD_ALREADY_EXISTS"
+      }, 400);
+    }
+
+    // Validate password strength
+    const passwordValidation = validatePassword(newPassword);
+    if (!passwordValidation.isValid) {
+      logger.logSecurityEvent({
+        level: 'warning',
+        message: 'Weak password attempt during password set',
+        data: { 
+          userId: user.id,
+          email: user.email,
+          strength: passwordValidation.strength,
+          errors: passwordValidation.errors,
+          provider: userData.user.app_metadata?.provider
+        },
+        userId: user.id,
+        ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+      });
+
+      return c.json({
+        error: "Contraseña débil",
+        details: passwordValidation.errors,
+        strength: passwordValidation.strength
+      }, 400);
+    }
+
+    // Set password using Supabase Admin API
+    const { error: updateError } = await supabase.auth.admin.updateUserById(
+      user.id,
+      { password: newPassword }
+    );
+
+    if (updateError) {
+      logger.logSecurityEvent({
+        level: 'error',
+        message: 'Password set failed for OAuth user',
+        data: { 
+          userId: user.id,
+          email: user.email,
+          error: updateError.message,
+          provider: userData.user.app_metadata?.provider
+        },
+        userId: user.id,
+        ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+      });
+
+      return c.json({
+        error: "Error al establecer la contraseña",
+        code: "PASSWORD_SET_ERROR"
+      }, 500);
+    }
+
+    // Log successful password set
+    logger.logSecurityEvent({
+      level: 'info',
+      message: 'Password set successfully for OAuth user',
+      data: { 
+        userId: user.id,
+        email: user.email,
+        strength: passwordValidation.strength.score,
+        provider: userData.user.app_metadata?.provider
+      },
+      userId: user.id,
+      ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+    });
+
+    return c.json({
+      message: "Contraseña establecida exitosamente. Ahora puedes iniciar sesión con email y contraseña además de tu cuenta OAuth.",
+      code: "PASSWORD_SET_SUCCESS",
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Error al establecer contraseña";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
 export default auth; 
