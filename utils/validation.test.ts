@@ -7,7 +7,7 @@ import {
   sanitizeString,
   validateAndSanitizeEmail,
   validateUrl,
-  validateMexicanPhone,
+  validatePhone,
   validateMexicanRFC
 } from "./validation.ts";
 
@@ -202,28 +202,31 @@ Deno.test("validateUrl - Invalid URLs", () => {
   });
 });
 
-Deno.test("validateMexicanPhone - Valid Phones", () => {
+Deno.test("validatePhone - Valid Phones", () => {
   const validPhones = [
-    "5512345678",
-    "+525512345678",
-    "525512345678"
+    "1234567",
+    "+52 1234567",
+    "52 1234567",
+    "123-4567",
+    "123 4567"
   ];
 
   validPhones.forEach(phone => {
-    assertEquals(validateMexicanPhone(phone), true, `Phone should be valid: ${phone}`);
+    assertEquals(validatePhone(phone), true, `Phone should be valid: ${phone}`);
   });
 });
 
-Deno.test("validateMexicanPhone - Invalid Phones", () => {
+Deno.test("validatePhone - Invalid Phones", () => {
   const invalidPhones = [
-    "123456789", // Too short
-    "55123456789", // Too long
-    "0123456789", // Starts with 0
+    "123456", // Too short (6 digits)
+    "12345678", // Too long (8 digits)
+    "0123456", // Starts with 0
+    "123456a", // Contains letters
     "invalid"
   ];
 
   invalidPhones.forEach(phone => {
-    assertEquals(validateMexicanPhone(phone), false, `Phone should be invalid: ${phone}`);
+    assertEquals(validatePhone(phone), false, `Phone should be invalid: ${phone}`);
   });
 });
 

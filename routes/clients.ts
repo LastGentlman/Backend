@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { getSupabaseClient } from '../utils/supabase.ts';
 import { authMiddleware } from '../middleware/auth.ts';
+import { validatePhone } from '../utils/validation.ts';
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 
 const clients = new Hono();
@@ -10,7 +11,13 @@ const clients = new Hono();
 const createClientSchema = z.object({
   name: z.string().min(2, "El nombre debe tener al menos 2 caracteres").max(255),
   email: z.string().email("Email inválido").optional().or(z.literal("")),
-  phone: z.string().max(20, "El teléfono debe tener máximo 20 caracteres").optional().or(z.literal("")),
+  phone: z.string()
+    .max(20, "El teléfono debe tener máximo 20 caracteres")
+    .optional()
+    .or(z.literal(""))
+    .refine((val) => !val || validatePhone(val), {
+      message: "El teléfono debe tener exactamente 7 dígitos numéricos"
+    }),
   address: z.string().max(500, "La dirección debe tener máximo 500 caracteres").optional().or(z.literal("")),
   notes: z.string().max(1000, "Las notas deben tener máximo 1000 caracteres").optional().or(z.literal(""))
 });

@@ -14,10 +14,10 @@ export const trialActivationSchema = z.object({
     .max(255, "El email no puede exceder 255 caracteres"),
   
   businessPhone: z.string()
-    .max(20, "El teléfono no puede exceder 20 caracteres")
+    .max(7, "El teléfono no puede exceder 7 caracteres")
     .optional()
-    .refine((val: string | undefined) => !val || /^[\+]?[1-9][\d]{0,15}$/.test(val), {
-      message: "Número de teléfono inválido"
+    .refine((val: string | undefined) => !val || validatePhone(val), {
+      message: "El teléfono debe tener exactamente 7 dígitos numéricos"
     }),
   
   businessAddress: z.string()
@@ -128,7 +128,12 @@ export const orderItemSchema = z.object({
 // Schema para crear orden
 export const createOrderSchema = z.object({
   client_name: z.string().min(2, "El nombre del cliente debe tener al menos 2 caracteres").max(100),
-  client_phone: z.string().max(20).optional(),
+  client_phone: z.string()
+    .max(20, "El teléfono no puede exceder 20 caracteres")
+    .optional()
+    .refine((val: string | undefined) => !val || validatePhone(val), {
+      message: "El teléfono debe tener exactamente 7 dígitos numéricos"
+    }),
   delivery_date: z.string().min(8, "La fecha de entrega es requerida"),
   delivery_time: z.string().max(10).optional(),
   notes: z.string().max(500).optional(),
@@ -217,11 +222,14 @@ export function validateUrl(url: string): boolean {
 }
 
 /**
- * Valida un número de teléfono mexicano
+ * Valida un número de teléfono (7 dígitos numéricos)
  */
-export function validateMexicanPhone(phone: string): boolean {
-  const phoneRegex = /^(\+52|52)?[1-9][0-9]{9}$/;
-  return phoneRegex.test(phone.replace(/\s/g, ''));
+export function validatePhone(phone: string): boolean {
+  // Remover espacios y caracteres no numéricos
+  const cleanPhone = phone.replace(/\D/g, '');
+  // Validar que tenga exactamente 7 dígitos y no empiece con 0
+  const phoneRegex = /^[1-9][0-9]{6}$/;
+  return phoneRegex.test(cleanPhone);
 }
 
 /**
