@@ -66,4 +66,60 @@ export interface BusinessSettings {
     push: boolean;
   };
   timezone: string;
+}
+
+// ===== TIPOS PARA CÓDIGOS DE INVITACIÓN =====
+
+export interface BusinessInvitationCode {
+  id: string;
+  business_id: string;
+  code: string;
+  created_by: string;
+  expires_at: string;
+  max_uses: number;
+  current_uses: number;
+  status: 'active' | 'used' | 'expired' | 'disabled';
+  role: 'admin' | 'seller';
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessInvitationUsage {
+  id: string;
+  invitation_code_id: string;
+  used_by: string;
+  used_at: string;
+  ip_address?: string;
+  user_agent?: string;
+}
+
+export interface CreateInvitationCodeRequest {
+  business_id: string;
+  role: 'admin' | 'seller';
+  max_uses?: number;
+  expires_in_hours?: number;
+  notes?: string;
+}
+
+export interface JoinBusinessRequest {
+  businessCode: string;
+}
+
+export interface JoinBusinessResponse {
+  success: boolean;
+  business: {
+    id: string;
+    name: string;
+    role: string;
+  };
+  message: string;
+}
+
+export interface InvitationCodeStats {
+  total_codes: number;
+  active_codes: number;
+  used_codes: number;
+  expired_codes: number;
+  disabled_codes: number;
 } 

@@ -100,6 +100,52 @@ export const businessSettingsUpdateSchema = z.object({
   }).optional()
 });
 
+// ===== SCHEMAS PARA CÓDIGOS DE INVITACIÓN =====
+
+// Schema para crear código de invitación
+export const createInvitationCodeSchema = z.object({
+  business_id: z.string().uuid("ID de negocio inválido"),
+  role: z.enum(["admin", "seller"], {
+    errorMap: () => ({ message: "Rol inválido. Solo se permiten: admin, seller" })
+  }),
+  max_uses: z.number()
+    .min(1, "El número máximo de usos debe ser al menos 1")
+    .max(100, "El número máximo de usos no puede exceder 100")
+    .default(1),
+  expires_in_hours: z.number()
+    .min(1, "La expiración debe ser al menos 1 hora")
+    .max(720, "La expiración no puede exceder 30 días (720 horas)")
+    .default(24),
+  notes: z.string()
+    .max(500, "Las notas no pueden exceder 500 caracteres")
+    .optional()
+});
+
+// Schema para unirse a un negocio
+export const joinBusinessSchema = z.object({
+  businessCode: z.string()
+    .length(11, "El código debe tener exactamente 11 caracteres")
+    .regex(/^[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$/, "El código debe tener el formato XXX-XXX-XXX")
+});
+
+// Schema para actualizar código de invitación
+export const updateInvitationCodeSchema = z.object({
+  status: z.enum(["active", "disabled"], {
+    errorMap: () => ({ message: "Estado inválido. Solo se permiten: active, disabled" })
+  }).optional(),
+  max_uses: z.number()
+    .min(1, "El número máximo de usos debe ser al menos 1")
+    .max(100, "El número máximo de usos no puede exceder 100")
+    .optional(),
+  expires_in_hours: z.number()
+    .min(1, "La expiración debe ser al menos 1 hora")
+    .max(720, "La expiración no puede exceder 30 días (720 horas)")
+    .optional(),
+  notes: z.string()
+    .max(500, "Las notas no pueden exceder 500 caracteres")
+    .optional()
+});
+
 // Schema para validación de UUID
 export const uuidSchema = z.string()
   .uuid("ID inválido");

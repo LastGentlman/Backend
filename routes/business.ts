@@ -686,4 +686,418 @@ async function notifyOwnerOfDisassociation(data: {
   console.log(`📧 Disassociation notification: ${data.employeeEmail} (${data.employeeRole}) left ${data.businessName}`);
 }
 
+// ===== ENDPOINTS PARA CÓDIGOS DE INVITACIÓN =====
+
+// Unirse a un negocio usando código de invitación
+business.post("/join", async (c) => {
+  try {
+    // Obtener usuario del token
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Token de autorización requerido" }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const { getUserFromToken } = await import("../utils/supabase.ts");
+    const user = await getUserFromToken(token);
+    
+    if (!user) {
+      return c.json({ error: "Usuario no encontrado" }, 401);
+    }
+
+    // Obtener y validar datos del request
+    const requestData = await c.req.json();
+    const { joinBusinessSchema } = await import("../utils/validation.ts");
+    
+    const validation = validateData(joinBusinessSchema, requestData);
+    if (!validation.success) {
+      return c.json({ 
+        error: "Datos de entrada inválidos",
+        details: validation.errors.issues.map(issue => ({
+          field: issue.path.join('.'),
+          message: issue.message
+        }))
+      }, 400);
+    }
+    
+    const { businessCode } = validation.data;
+    const supabase = getSupabaseClient();
+
+    // Verificar que el usuario no esté ya en un negocio
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('current_business_id')
+      .eq('id', user.id)
+      .single();
+
+    if (existingProfile?.current_business_id) {
+      return c.json({ 
+        error: "Ya estás asociado a un negocio",
+        code: 'ALREADY_IN_BUSINESS'
+      }, 400);
+    }
+
+    // Usar la función de base de datos para validar y usar el código
+    const { data: result, error: functionError } = await supabase
+      .rpc('use_invitation_code', {
+        invitation_code: businessCode,
+        user_id: user.id
+      });
+
+    if (functionError) {
+      console.error('Error using invitation code:', functionError);
+      return c.json({ 
+        error: "Error al procesar el código de invitación",
+        code: 'INVITATION_PROCESSING_ERROR'
+      }, 500);
+    }
+
+    if (!result.success) {
+      return c.json({ 
+        error: result.error,
+        code: 'INVITATION_VALIDATION_FAILED'
+      }, 400);
+    }
+
+    // Obtener información del negocio
+    const { data: business, error: businessError } = await supabase
+      .from('businesses')
+      .select('id, name')
+      .eq('id', result.business_id)
+      .single();
+
+    if (businessError || !business) {
+      console.error('Error fetching business:', businessError);
+      return c.json({ 
+        error: "Error al obtener información del negocio",
+        code: 'BUSINESS_FETCH_ERROR'
+      }, 500);
+    }
+
+    // Crear empleado asociado al negocio
+    const { error: employeeError } = await supabase
+      .from('employees')
+      .insert({
+        user_id: user.id,
+        business_id: business.id,
+        role: result.role,
+        is_active: true
+      });
+
+    if (employeeError) {
+      console.error('Error creating employee:', employeeError);
+      return c.json({ 
+        error: "Error al crear la asociación con el negocio",
+        code: 'EMPLOYEE_CREATION_ERROR'
+      }, 500);
+    }
+
+    // Actualizar perfil del usuario con businessId
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ 
+        current_business_id: business.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', user.id);
+
+    if (profileError) {
+      console.error('Error updating user profile:', profileError);
+      // No fallar si hay error en perfil
+    }
+
+    return c.json({
+      success: true,
+      business: {
+        id: business.id,
+        name: business.name,
+        role: result.role
+      },
+      message: "Te has unido al negocio exitosamente"
+    });
+
+  } catch (error) {
+    console.error('Error in business join:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    return c.json({ 
+      error: 'Error al unirse al negocio',
+      details: errorMessage,
+      code: 'INTERNAL_SERVER_ERROR'
+    }, 500);
+  }
+});
+
+// Crear código de invitación (solo owner/admin)
+business.post("/invitation-codes", requireAdminOrOwner, async (c) => {
+  try {
+    const business = getBusinessFromContext(c);
+    const user = getUserFromContext(c);
+    
+    if (!business || !user) {
+      return c.json({ 
+        error: 'Contexto de negocio y usuario requerido',
+        code: 'CONTEXT_REQUIRED'
+      }, 400);
+    }
+    
+    const requestData = await c.req.json();
+    const { createInvitationCodeSchema } = await import("../utils/validation.ts");
+    
+    const validation = validateData(createInvitationCodeSchema, requestData);
+    if (!validation.success) {
+      return c.json({ 
+        error: 'Datos de entrada inválidos',
+        details: validation.errors.issues.map(issue => ({
+          field: issue.path.join('.'),
+          message: issue.message
+        }))
+      }, 400);
+    }
+    
+    const { role, max_uses, expires_in_hours, notes } = validation.data;
+    const supabase = getSupabaseClient();
+
+    // Generar código único usando la función de base de datos
+    const { data: generatedCode, error: codeError } = await supabase
+      .rpc('generate_invitation_code');
+
+    if (codeError || !generatedCode) {
+      console.error('Error generating invitation code:', codeError);
+      return c.json({ 
+        error: 'Error al generar el código de invitación',
+        code: 'CODE_GENERATION_ERROR'
+      }, 500);
+    }
+
+    // Crear el código de invitación
+    const expiresAt = new Date(Date.now() + (expires_in_hours || 24) * 60 * 60 * 1000);
+    
+    const { data: invitationCode, error: insertError } = await supabase
+      .from('business_invitation_codes')
+      .insert({
+        business_id: business.id,
+        code: generatedCode,
+        created_by: user.id,
+        expires_at: expiresAt.toISOString(),
+        max_uses: max_uses || 1,
+        role,
+        notes
+      })
+      .select()
+      .single();
+      
+    if (insertError) {
+      console.error('Error creating invitation code:', insertError);
+      return c.json({ 
+        error: 'Error al crear el código de invitación',
+        code: 'INVITATION_CREATION_ERROR'
+      }, 500);
+    }
+    
+    return c.json({ 
+      invitationCode,
+      message: 'Código de invitación creado exitosamente'
+    }, 201);
+
+  } catch (error) {
+    console.error('Error creating invitation code:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    return c.json({ 
+      error: 'Error al crear el código de invitación',
+      details: errorMessage,
+      code: 'INTERNAL_SERVER_ERROR'
+    }, 500);
+  }
+});
+
+// Obtener códigos de invitación del negocio (solo owner/admin)
+business.get("/invitation-codes", requireAdminOrOwner, async (c) => {
+  try {
+    const business = getBusinessFromContext(c);
+    
+    if (!business) {
+      return c.json({ 
+        error: 'Contexto de negocio requerido',
+        code: 'CONTEXT_REQUIRED'
+      }, 400);
+    }
+    
+    const supabase = getSupabaseClient();
+
+    // Obtener códigos de invitación
+    const { data: invitationCodes, error: codesError } = await supabase
+      .from('business_invitation_codes')
+      .select(`
+        *,
+        created_by_profile:profiles!business_invitation_codes_created_by_fkey(name, email)
+      `)
+      .eq('business_id', business.id)
+      .order('created_at', { ascending: false });
+
+    if (codesError) {
+      console.error('Error fetching invitation codes:', codesError);
+      return c.json({ 
+        error: 'Error al obtener los códigos de invitación',
+        code: 'CODES_FETCH_ERROR'
+      }, 500);
+    }
+
+    // Obtener estadísticas
+    const stats = {
+      total_codes: invitationCodes.length,
+      active_codes: invitationCodes.filter(code => code.status === 'active').length,
+      used_codes: invitationCodes.filter(code => code.status === 'used').length,
+      expired_codes: invitationCodes.filter(code => code.status === 'expired').length,
+      disabled_codes: invitationCodes.filter(code => code.status === 'disabled').length
+    };
+    
+    return c.json({ 
+      invitationCodes,
+      stats
+    });
+
+  } catch (error) {
+    console.error('Error fetching invitation codes:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    return c.json({ 
+      error: 'Error al obtener los códigos de invitación',
+      details: errorMessage,
+      code: 'INTERNAL_SERVER_ERROR'
+    }, 500);
+  }
+});
+
+// Desactivar código de invitación (solo owner/admin)
+business.patch("/invitation-codes/:codeId", requireAdminOrOwner, async (c) => {
+  try {
+    const business = getBusinessFromContext(c);
+    const codeId = c.req.param('codeId');
+    
+    if (!business || !codeId) {
+      return c.json({ 
+        error: 'Contexto de negocio y ID de código requeridos',
+        code: 'CONTEXT_REQUIRED'
+      }, 400);
+    }
+    
+    const requestData = await c.req.json();
+    const { updateInvitationCodeSchema } = await import("../utils/validation.ts");
+    
+    const validation = validateData(updateInvitationCodeSchema, requestData);
+    if (!validation.success) {
+      return c.json({ 
+        error: 'Datos de entrada inválidos',
+        details: validation.errors.issues.map(issue => ({
+          field: issue.path.join('.'),
+          message: issue.message
+        }))
+      }, 400);
+    }
+    
+    const supabase = getSupabaseClient();
+
+    // Verificar que el código pertenece al negocio
+    const { data: existingCode, error: fetchError } = await supabase
+      .from('business_invitation_codes')
+      .select('id, status')
+      .eq('id', codeId)
+      .eq('business_id', business.id)
+      .single();
+
+    if (fetchError || !existingCode) {
+      return c.json({ 
+        error: 'Código de invitación no encontrado',
+        code: 'CODE_NOT_FOUND'
+      }, 404);
+    }
+
+    // Actualizar el código
+    const updateData: any = { updated_at: new Date().toISOString() };
+    
+    if (validation.data.status !== undefined) {
+      updateData.status = validation.data.status;
+    }
+    if (validation.data.max_uses !== undefined) {
+      updateData.max_uses = validation.data.max_uses;
+    }
+    if (validation.data.expires_in_hours !== undefined) {
+      updateData.expires_at = new Date(Date.now() + validation.data.expires_in_hours * 60 * 60 * 1000).toISOString();
+    }
+    if (validation.data.notes !== undefined) {
+      updateData.notes = validation.data.notes;
+    }
+
+    const { data: updatedCode, error: updateError } = await supabase
+      .from('business_invitation_codes')
+      .update(updateData)
+      .eq('id', codeId)
+      .select()
+      .single();
+      
+    if (updateError) {
+      console.error('Error updating invitation code:', updateError);
+      return c.json({ 
+        error: 'Error al actualizar el código de invitación',
+        code: 'CODE_UPDATE_ERROR'
+      }, 500);
+    }
+    
+    return c.json({ 
+      invitationCode: updatedCode,
+      message: 'Código de invitación actualizado exitosamente'
+    });
+
+  } catch (error) {
+    console.error('Error updating invitation code:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    return c.json({ 
+      error: 'Error al actualizar el código de invitación',
+      details: errorMessage,
+      code: 'INTERNAL_SERVER_ERROR'
+    }, 500);
+  }
+});
+
+// Limpiar códigos expirados (solo owner/admin)
+business.post("/invitation-codes/cleanup", requireAdminOrOwner, async (c) => {
+  try {
+    const business = getBusinessFromContext(c);
+    
+    if (!business) {
+      return c.json({ 
+        error: 'Contexto de negocio requerido',
+        code: 'CONTEXT_REQUIRED'
+      }, 400);
+    }
+    
+    const supabase = getSupabaseClient();
+
+    // Ejecutar limpieza usando la función de base de datos
+    const { data: cleanedCount, error: cleanupError } = await supabase
+      .rpc('cleanup_expired_invitation_codes');
+
+    if (cleanupError) {
+      console.error('Error cleaning up expired codes:', cleanupError);
+      return c.json({ 
+        error: 'Error al limpiar códigos expirados',
+        code: 'CLEANUP_ERROR'
+      }, 500);
+    }
+    
+    return c.json({ 
+      message: `Se limpiaron ${cleanedCount} códigos expirados`,
+      cleaned_count: cleanedCount
+    });
+
+  } catch (error) {
+    console.error('Error cleaning up expired codes:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    return c.json({ 
+      error: 'Error al limpiar códigos expirados',
+      details: errorMessage,
+      code: 'INTERNAL_SERVER_ERROR'
+    }, 500);
+  }
+});
+
 export default business; 
