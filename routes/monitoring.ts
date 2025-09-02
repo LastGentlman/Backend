@@ -11,11 +11,20 @@ import { tokenService } from "../services/TokenManagementService.ts";
 import { logXSSAttempt } from "../utils/security.ts";
 import { z } from "zod";
 import { validateRequest, getValidatedData } from "../middleware/validation.ts";
+import { getEnvironmentConfig } from "../utils/config.ts";
 
 const monitoring = new Hono();
+const config = getEnvironmentConfig();
 
-// Apply CORS and rate limiting
-monitoring.use("*", cors());
+// Apply CORS and rate limiting with environment-specific configuration
+monitoring.use("*", cors({
+  origin: config.cors.origins,
+  credentials: true,
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Session-ID', 'X-CSRF-Token'],
+  exposeHeaders: ['Content-Length', 'X-CSRF-Token'],
+  maxAge: 600
+}));
 monitoring.use("*", smartRateLimiter());
 
 // Apply authentication middleware to protected routes only

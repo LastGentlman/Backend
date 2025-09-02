@@ -61,7 +61,8 @@ export const getEnvironmentConfig = (): EnvironmentConfig => {
         cors: {
           // ✅ FIJO: Solo dominios específicos en producción
           origins: [
-            "https://www.pedidolist.com"
+            "https://www.pedidolist.com",
+            "https://pedidolist.com"
           ]
         },
         features: {
