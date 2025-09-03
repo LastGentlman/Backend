@@ -1012,7 +1012,7 @@ business.patch("/invitation-codes/:codeId", requireAdminOrOwner, async (c) => {
     }
 
     // Actualizar el código
-    const updateData: any = { updated_at: new Date().toISOString() };
+    const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
     
     if (validation.data.status !== undefined) {
       updateData.status = validation.data.status;
