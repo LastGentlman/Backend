@@ -153,8 +153,7 @@ app.use("*", async (c, next) => {
 // 4. Middleware de headers de seguridad
 app.use("*", securityHeadersMiddleware(CONFIG.IS_PRODUCTION));
 
-// 5. Middleware CSRF para rutas de API
-app.use("/api/*", csrfProtection());
+// 5. Middleware CSRF se aplicará después de autenticación
 
 // ===== HEALTH CHECK (antes de rutas protegidas) =====
 app.get("/health", async (c) => {
@@ -199,6 +198,16 @@ app.use("/api/clients/*", authMiddleware);
 app.use("/api/dashboard/*", authMiddleware);
 app.use("/api/test/*", authMiddleware);
 app.use("/api/notifications/*", authMiddleware);
+
+// ===== MIDDLEWARE CSRF PARA RUTAS PROTEGIDAS =====
+// Aplicar CSRF después de autenticación para rutas que modifican datos
+app.use("/api/orders/*", csrfProtection());
+app.use("/api/business/*", csrfProtection());
+app.use("/api/products/*", csrfProtection());
+app.use("/api/clients/*", csrfProtection());
+app.use("/api/dashboard/*", csrfProtection());
+app.use("/api/test/*", csrfProtection());
+app.use("/api/notifications/*", csrfProtection());
 
 // ===== RUTAS PROTEGIDAS (requieren autenticación) =====
 app.route("/api/test", testRoutes);
