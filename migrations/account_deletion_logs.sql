@@ -66,8 +66,8 @@ BEGIN
     RETURN QUERY
     SELECT 
         COALESCE(o.total_orders, 0) as total_orders,
-        calculate_account_age(u.created_at) as account_age_days
-    FROM auth.users u
+        calculate_account_age(p.created_at) as account_age_days
+    FROM profiles p
     LEFT JOIN (
         SELECT 
             business_id,
@@ -78,6 +78,6 @@ BEGIN
         )
         GROUP BY business_id
     ) o ON true
-    WHERE u.id = p_user_id;
+    WHERE p.id = p_user_id;
 END;
-$$ LANGUAGE plpgsql; 
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''; 

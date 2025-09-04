@@ -804,15 +804,17 @@ auth.delete("/account", authMiddleware, async (c) => {
     // 📋 COMPLIANCE: Get user statistics for logging
     let userStats = { total_orders: 0, account_age_days: 0 };
     try {
-      const { data: stats } = await supabase.rpc('get_user_deletion_stats', { p_user_id: user.id });
-      if (stats && stats.length > 0) {
+      const { data: stats, error: statsError } = await supabase.rpc('get_user_deletion_stats', { p_user_id: user.id });
+      if (statsError) {
+        console.warn('Warning: Could not get user stats for logging:', statsError);
+      } else if (stats && stats.length > 0) {
         userStats = stats[0];
       }
     } catch (statsError) {
       console.warn('Warning: Could not get user stats for logging:', statsError);
     }
 
-    // 📊 COMPLIANCE: Export user data before deletion
+    // 📊 COMPLIANCE: Export user data before deletion (optional)
     let exportData = null;
     try {
       exportData = await dataExportService.exportUserData(user.id, {
@@ -824,9 +826,10 @@ auth.delete("/account", authMiddleware, async (c) => {
       console.log(`📊 Data export completed for user: ${user.email}`);
     } catch (exportError) {
       console.warn('Warning: Could not export user data:', exportError);
+      // Continue with deletion even if export fails
     }
 
-    // 📋 COMPLIANCE: Log deletion to compliance table
+    // 📋 COMPLIANCE: Log deletion to compliance table (optional)
     try {
       const { error: logError } = await supabase
         .from('account_deletion_logs')
@@ -849,12 +852,13 @@ auth.delete("/account", authMiddleware, async (c) => {
         });
 
       if (logError) {
-        console.error('Error logging deletion to compliance table:', logError);
+        console.warn('Warning: Could not log deletion to compliance table:', logError);
       } else {
         console.log(`📋 Compliance log created for user: ${user.email}`);
       }
     } catch (logError) {
-      console.error('Error creating compliance log:', logError);
+      console.warn('Warning: Could not create compliance log:', logError);
+      // Continue with deletion even if logging fails
     }
 
     // 🗑️ STEP 1: Delete user's avatar files from storage
@@ -928,7 +932,7 @@ auth.delete("/account", authMiddleware, async (c) => {
     // ✅ SUCCESS: Log successful deletion
     console.log(`✅ Account successfully deleted for user: ${user.email} (${user.id})`);
 
-    // 📧 EMAIL: Send notification to business owner if employee
+    // 📧 EMAIL: Send notification to business owner if employee (optional)
     if (employee) {
       try {
         await emailNotificationService.notifyOwnerOfAccountDeletion({
@@ -942,6 +946,7 @@ auth.delete("/account", authMiddleware, async (c) => {
         });
       } catch (emailError) {
         console.warn('Warning: Could not send account deletion email notification:', emailError);
+        // Continue with deletion even if email fails
       }
     }
 
