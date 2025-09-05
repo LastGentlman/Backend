@@ -77,11 +77,57 @@ export class StripeClient {
     return await this.stripe.prices.retrieve(priceId);
   }
 
+  // Obtener precio por lookup key
+  async getPriceByLookupKey(lookupKey: string): Promise<string> {
+    try {
+      const prices = await this.stripe.prices.list({
+        lookup_keys: [lookupKey],
+        active: true,
+        limit: 1
+      });
+
+      if (prices.data.length === 0) {
+        throw new Error(`No se encontró un precio activo con lookup key: ${lookupKey}`);
+      }
+
+      return prices.data[0].id;
+    } catch (error) {
+      console.error(`Error obteniendo precio por lookup key ${lookupKey}:`, error);
+      throw new Error(`Error obteniendo precio: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+    }
+  }
+
   // Listar precios disponibles
   async listPrices(active: boolean = true): Promise<Stripe.ApiList<Stripe.Price>> {
     return await this.stripe.prices.list({
       active,
       limit: 100
+    });
+  }
+
+  // Obtener suscripción por ID
+  async getSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
+    return await this.stripe.subscriptions.retrieve(subscriptionId);
+  }
+
+  // Extender trial de una suscripción existente
+  async extendTrial(
+    subscriptionId: string, 
+    paymentMethodId: string, 
+    additionalDays: number
+  ): Promise<Stripe.Subscription> {
+    // Obtener la suscripción actual
+    const subscription = await this.getSubscription(subscriptionId);
+    
+    // Calcular la nueva fecha de fin del trial
+    const currentTrialEnd = subscription.trial_end || Math.floor(Date.now() / 1000);
+    const newTrialEnd = currentTrialEnd + (additionalDays * 24 * 60 * 60);
+
+    // Actualizar la suscripción
+    return await this.stripe.subscriptions.update(subscriptionId, {
+      default_payment_method: paymentMethodId,
+      trial_end: newTrialEnd,
+      payment_behavior: 'default_incomplete'
     });
   }
 }

@@ -86,13 +86,24 @@ business.post("/activate-trial", async (c) => {
     }
 
     // 3. Crear suscripción con trial de 7 días
-    // Nota: Necesitas crear un Price en Stripe primero
-    const priceId = Deno.env.get('STRIPE_PRICE_ID') || 'price_default';
+    // Determinar el precio basado en si hay método de pago
+    let priceId: string;
+    let trialDays: number;
+    
+    if (paymentMethodId) {
+      // Si hay método de pago desde el inicio, usar precio mensual con 14 días de trial
+      priceId = await stripe.getPriceByLookupKey('price_monthly');
+      trialDays = 14; // 14 días total si agregan pago desde el inicio
+    } else {
+      // Si no hay método de pago, usar precio gratuito con 7 días de trial
+      priceId = await stripe.getPriceByLookupKey('price_free_trial');
+      trialDays = 7; // 7 días iniciales, pueden extender a 14 días después
+    }
     
     const subscription = await stripe.createSubscriptionWithTrial(
       stripeCustomer.id,
       priceId,
-      7, // 7 días de trial
+      trialDays,
       paymentMethodId
     );
 
@@ -213,6 +224,106 @@ business.post("/activate-trial", async (c) => {
     const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
     return c.json({ 
       error: 'Error al activar el trial',
+      details: errorMessage 
+    }, 500);
+  }
+});
+
+// ===== EXTENSIÓN DE TRIAL =====
+
+// Extender trial cuando el usuario agrega método de pago
+business.post("/extend-trial", async (c) => {
+  try {
+    // Obtener usuario del token
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Token de autorización requerido" }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const { getUserFromToken } = await import("../utils/supabase.ts");
+    const user = await getUserFromToken(token);
+    
+    if (!user) {
+      return c.json({ error: "Usuario no encontrado" }, 401);
+    }
+
+    // Obtener datos del request
+    const requestData = await c.req.json();
+    
+    // Validar que se proporcione método de pago
+    if (!requestData.paymentMethod || !requestData.paymentMethod.card) {
+      return c.json({ 
+        error: "Método de pago requerido para extender el trial" 
+      }, 400);
+    }
+
+    const supabase = getSupabaseClient();
+    const stripe = getStripeClient();
+
+    // 1. Obtener el negocio del usuario
+    const { data: business, error: businessError } = await supabase
+      .from('businesses')
+      .select('id, name, stripe_customer_id, stripe_subscription_id')
+      .eq('owner_id', user.id)
+      .single();
+
+    if (businessError || !business) {
+      return c.json({ error: "Negocio no encontrado" }, 404);
+    }
+
+    // 2. Verificar que el trial aún esté activo
+    const subscription = await stripe.getSubscription(business.stripe_subscription_id);
+    if (!subscription || subscription.status !== 'trialing') {
+      return c.json({ 
+        error: "El trial ya ha expirado o no está activo" 
+      }, 400);
+    }
+
+    // 3. Crear y adjuntar método de pago
+    const paymentMethod = await stripe.createPaymentMethod(
+      requestData.paymentMethod.type,
+      requestData.paymentMethod.card
+    );
+    
+    await stripe.attachPaymentMethodToCustomer(paymentMethod.id, business.stripe_customer_id);
+
+    // 4. Actualizar la suscripción para extender el trial
+    const updatedSubscription = await stripe.extendTrial(
+      business.stripe_subscription_id,
+      paymentMethod.id,
+      7 // 7 días adicionales
+    );
+
+    // 5. Actualizar el negocio en la base de datos
+    const { error: updateError } = await supabase
+      .from('businesses')
+      .update({
+        stripe_subscription_id: updatedSubscription.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', business.id);
+
+    if (updateError) {
+      console.error('Error updating business:', updateError);
+    }
+
+    return c.json({
+      success: true,
+      message: "Trial extendido exitosamente por 7 días adicionales",
+      subscription: {
+        id: updatedSubscription.id,
+        status: updatedSubscription.status,
+        trialEnd: updatedSubscription.trial_end,
+        currentPeriodEnd: updatedSubscription.current_period_end
+      }
+    });
+
+  } catch (error) {
+    console.error('Error extending trial:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    return c.json({ 
+      error: 'Error al extender el trial',
       details: errorMessage 
     }, 500);
   }
