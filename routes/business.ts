@@ -89,7 +89,6 @@ business.post("/activate-trial", async (c) => {
     // 3. Crear suscripción con trial dinámico
     // Determinar el precio y trial basado en configuración dinámica
     let priceId: string;
-    let trialDays: number;
     
     // Lógica de trial dinámico: SIEMPRE 7 días iniciales
     // Si hay método de pago desde el inicio, usar precio mensual
@@ -101,7 +100,7 @@ business.post("/activate-trial", async (c) => {
     }
     
     // SIEMPRE empezar con 7 días (a menos que sea trial personalizado)
-    trialDays = validatedData.trialDays || 7; // Default 7 días iniciales
+    const trialDays = validatedData.trialDays || 7; // Default 7 días iniciales
     
     const subscription = await stripe.createSubscriptionWithTrial(
       stripeCustomer.id,
