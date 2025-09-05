@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import { getSupabaseClient } from "../utils/supabase.ts";
 import { requireOwner, requireAdminOrOwner } from "../middleware/auth.ts";
 import { getBusinessFromContext, getEmployeeFromContext, getUserFromContext } from "../types/context.ts";
@@ -85,20 +86,22 @@ business.post("/activate-trial", async (c) => {
       }
     }
 
-    // 3. Crear suscripción con trial de 7 días
-    // Determinar el precio basado en si hay método de pago
+    // 3. Crear suscripción con trial dinámico
+    // Determinar el precio y trial basado en configuración dinámica
     let priceId: string;
     let trialDays: number;
     
+    // Lógica de trial dinámico: SIEMPRE 7 días iniciales
+    // Si hay método de pago desde el inicio, usar precio mensual
     if (paymentMethodId) {
-      // Si hay método de pago desde el inicio, usar precio mensual con 14 días de trial
       priceId = await stripe.getPriceByLookupKey('price_monthly');
-      trialDays = 14; // 14 días total si agregan pago desde el inicio
     } else {
-      // Si no hay método de pago, usar precio gratuito con 7 días de trial
+      // Si no hay método de pago, usar precio gratuito
       priceId = await stripe.getPriceByLookupKey('price_free_trial');
-      trialDays = 7; // 7 días iniciales, pueden extender a 14 días después
     }
+    
+    // SIEMPRE empezar con 7 días (a menos que sea trial personalizado)
+    trialDays = validatedData.trialDays || 7; // Default 7 días iniciales
     
     const subscription = await stripe.createSubscriptionWithTrial(
       stripeCustomer.id,
@@ -229,6 +232,241 @@ business.post("/activate-trial", async (c) => {
   }
 });
 
+// ===== CREACIÓN DE NEGOCIO CON TRIAL PERSONALIZADO (ADMIN) =====
+
+// Crear negocio con trial personalizado (solo para administradores)
+business.post("/create-with-custom-trial", async (c) => {
+  try {
+    // Obtener usuario del token
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Token de autorización requerido" }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const { getUserFromToken } = await import("../utils/supabase.ts");
+    const user = await getUserFromToken(token);
+    
+    if (!user) {
+      return c.json({ error: "Usuario no encontrado" }, 401);
+    }
+
+    // Verificar que el usuario sea administrador
+    const supabase = getSupabaseClient();
+    const { data: adminCheck, error: adminError } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    if (adminError || !adminCheck || !['admin', 'super_admin'].includes(adminCheck.role)) {
+      return c.json({ 
+        error: "Acceso denegado. Solo administradores pueden crear negocios con trial personalizado" 
+      }, 403);
+    }
+
+    // Obtener datos del request
+    const requestData = await c.req.json();
+    
+    // Validar datos con schema personalizado
+    const customTrialSchema = trialActivationSchema.extend({
+      trialDays: z.number()
+        .min(1, "El trial debe ser de al menos 1 día")
+        .max(365, "El trial no puede exceder 365 días"),
+      reason: z.string()
+        .min(10, "Debe proporcionar una razón para el trial personalizado")
+        .max(500, "La razón no puede exceder 500 caracteres"),
+      clientEmail: z.string()
+        .email("Email del cliente inválido")
+        .optional()
+    });
+
+    const validation = validateData(customTrialSchema, requestData);
+    if (!validation.success) {
+      return c.json({ 
+        error: "Datos de entrada inválidos",
+        details: validation.errors.issues.map(issue => ({
+          field: issue.path.join('.'),
+          message: issue.message
+        }))
+      }, 400);
+    }
+    
+    const validatedData = validation.data;
+
+    // Log de creación de trial personalizado
+    console.log(`🎯 Trial personalizado creado por admin ${user.email}:`, {
+      trialDays: validatedData.trialDays,
+      reason: validatedData.reason,
+      clientEmail: validatedData.clientEmail,
+      businessName: validatedData.businessName
+    });
+
+    // Usar la lógica existente pero con trial personalizado
+    const taxRegime = getTaxRegimeByCode(validatedData.taxRegime);
+    if (!taxRegime) {
+      return c.json({ 
+        error: "Régimen fiscal no encontrado" 
+      }, 400);
+    }
+
+    const stripe = getStripeClient();
+
+    // 1. Crear o obtener cliente en Stripe
+    const stripeCustomer = await stripe.createOrGetCustomer(
+      validatedData.businessEmail,
+      validatedData.billingName,
+      {
+        userId: user.id,
+        businessName: validatedData.businessName,
+        taxId: validatedData.taxId || '',
+        customTrial: 'true',
+        trialDays: validatedData.trialDays?.toString() || '7',
+        createdBy: user.email || 'unknown'
+      }
+    );
+
+    // 2. Procesar método de pago si se proporciona
+    let paymentMethodId: string | undefined;
+    if (validatedData.paymentMethod && validatedData.paymentMethod.card) {
+      try {
+        const paymentMethod = await stripe.createPaymentMethod(
+          validatedData.paymentMethod.type,
+          validatedData.paymentMethod.card
+        );
+        
+        await stripe.attachPaymentMethodToCustomer(paymentMethod.id, stripeCustomer.id);
+        paymentMethodId = paymentMethod.id;
+      } catch (error) {
+        console.error('Error processing payment method:', error);
+      }
+    }
+
+    // 3. Crear suscripción con trial personalizado
+    const priceId = paymentMethodId 
+      ? await stripe.getPriceByLookupKey('price_monthly')
+      : await stripe.getPriceByLookupKey('price_free_trial');
+    
+    const subscription = await stripe.createSubscriptionWithTrial(
+      stripeCustomer.id,
+      priceId,
+      validatedData.trialDays, // Trial personalizado
+      paymentMethodId
+    );
+
+    // 4. Crear negocio en la base de datos con metadata especial
+    const { data: business, error: businessError } = await supabase
+      .from('businesses')
+      .insert({
+        name: validatedData.businessName,
+        email: validatedData.businessEmail,
+        phone: validatedData.businessPhone || null,
+        address: validatedData.businessAddress || null,
+        owner_id: user.id,
+        stripe_customer_id: stripeCustomer.id,
+        stripe_subscription_id: subscription.id,
+        currency: validatedData.currency || "MXN",
+        tax_regime: taxRegime.code,
+        tax_id: validatedData.taxId || null,
+        subscription_status: 'trialing',
+        trial_ends_at: new Date(subscription.trial_end! * 1000).toISOString(),
+        settings: {
+          customTrial: true,
+          trialDays: validatedData.trialDays,
+          reason: validatedData.reason,
+          createdBy: user.email,
+          clientEmail: validatedData.clientEmail
+        }
+      })
+      .select()
+      .single();
+
+    if (businessError) {
+      console.error('Error creating business:', businessError);
+      return c.json({ 
+        error: 'Error al crear el negocio',
+        details: businessError.message 
+      }, 500);
+    }
+
+    // 5. Crear empleado (owner)
+    const { error: employeeError } = await supabase
+      .from('employees')
+      .insert({
+        business_id: business.id,
+        user_id: user.id,
+        role: 'owner',
+        is_active: true,
+        joined_at: new Date().toISOString()
+      });
+
+    if (employeeError) {
+      console.error('Error creating employee:', employeeError);
+    }
+
+    // 6. Crear sucursal por defecto
+    const { error: branchError } = await supabase
+      .from('branches')
+      .insert({
+        business_id: business.id,
+        name: 'Sucursal Principal',
+        address: validatedData.businessAddress || 'Dirección por definir',
+        phone: validatedData.businessPhone || null,
+        is_active: true
+      });
+
+    if (branchError) {
+      console.error('Error creating branch:', branchError);
+    }
+
+    // 7. Actualizar perfil del usuario con businessId
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ 
+        current_business_id: business.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', user.id);
+
+    if (profileError) {
+      console.error('Error updating user profile:', profileError);
+    }
+
+    const response: TrialActivationResponse = {
+      success: true,
+      business: {
+        id: business.id,
+        name: business.name,
+        stripeCustomerId: stripeCustomer.id,
+        stripeSubscriptionId: subscription.id,
+        trialEndsAt: new Date(subscription.trial_end! * 1000).toISOString(),
+        currency: validatedData.currency || "MXN",
+        taxRegime: {
+          code: taxRegime.code,
+          name: taxRegime.name,
+          type: taxRegime.type
+        }
+      },
+      subscription: {
+        id: subscription.id,
+        status: subscription.status,
+        trialEnd: subscription.trial_end!,
+        currentPeriodEnd: subscription.current_period_end
+      }
+    };
+
+    return c.json(response);
+
+  } catch (error) {
+    console.error('Error in custom trial creation:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    return c.json({ 
+      error: 'Error al crear negocio con trial personalizado',
+      details: errorMessage 
+    }, 500);
+  }
+});
+
 // ===== EXTENSIÓN DE TRIAL =====
 
 // Extender trial cuando el usuario agrega método de pago
@@ -292,7 +530,7 @@ business.post("/extend-trial", async (c) => {
     const updatedSubscription = await stripe.extendTrial(
       business.stripe_subscription_id,
       paymentMethod.id,
-      7 // 7 días adicionales
+      7 // 7 días adicionales (total: 7 iniciales + 7 adicionales = 14 días)
     );
 
     // 5. Actualizar el negocio en la base de datos
@@ -321,6 +559,155 @@ business.post("/extend-trial", async (c) => {
 
   } catch (error) {
     console.error('Error extending trial:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+    return c.json({ 
+      error: 'Error al extender el trial',
+      details: errorMessage 
+    }, 500);
+  }
+});
+
+// ===== EXTENSIÓN DE TRIAL POR ADMINISTRADOR =====
+
+// Extender trial de cualquier negocio (solo administradores)
+business.post("/admin/extend-trial/:businessId", async (c) => {
+  try {
+    // Obtener usuario del token
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Token de autorización requerido" }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const { getUserFromToken } = await import("../utils/supabase.ts");
+    const user = await getUserFromToken(token);
+    
+    if (!user) {
+      return c.json({ error: "Usuario no encontrado" }, 401);
+    }
+
+    // Verificar que el usuario sea administrador
+    const supabase = getSupabaseClient();
+    const { data: adminCheck, error: adminError } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    if (adminError || !adminCheck || !['admin', 'super_admin'].includes(adminCheck.role)) {
+      return c.json({ 
+        error: "Acceso denegado. Solo administradores pueden extender trials" 
+      }, 403);
+    }
+
+    const businessId = c.req.param('businessId');
+    const requestData = await c.req.json();
+    
+    // Validar datos
+    const extendTrialSchema = z.object({
+      additionalDays: z.number()
+        .min(1, "Debe extender al menos 1 día")
+        .max(365, "No se puede extender más de 365 días"),
+      reason: z.string()
+        .min(10, "Debe proporcionar una razón para la extensión")
+        .max(500, "La razón no puede exceder 500 caracteres")
+    });
+
+    const validation = validateData(extendTrialSchema, requestData);
+    if (!validation.success) {
+      return c.json({ 
+        error: "Datos de entrada inválidos",
+        details: validation.errors.issues.map(issue => ({
+          field: issue.path.join('.'),
+          message: issue.message
+        }))
+      }, 400);
+    }
+    
+    const { additionalDays, reason } = validation.data as { additionalDays: number; reason: string };
+
+    // 1. Obtener el negocio
+    const { data: business, error: businessError } = await supabase
+      .from('businesses')
+      .select('id, name, stripe_subscription_id, settings')
+      .eq('id', businessId)
+      .single();
+
+    if (businessError || !business) {
+      return c.json({ error: "Negocio no encontrado" }, 404);
+    }
+
+    // 2. Verificar que el trial aún esté activo
+    const stripe = getStripeClient();
+    const subscription = await stripe.getSubscription(business.stripe_subscription_id);
+    if (!subscription || subscription.status !== 'trialing') {
+      return c.json({ 
+        error: "El trial ya ha expirado o no está activo" 
+      }, 400);
+    }
+
+    // 3. Extender el trial
+    const updatedSubscription = await stripe.extendTrial(
+      business.stripe_subscription_id,
+      subscription.default_payment_method as string,
+      additionalDays
+    );
+
+    // 4. Actualizar el negocio con la nueva información
+    const currentSettings = business.settings || {};
+    const updatedSettings = {
+      ...currentSettings,
+      trialExtensions: [
+        ...(currentSettings.trialExtensions || []),
+        {
+          additionalDays,
+          reason,
+          extendedBy: user.email,
+          extendedAt: new Date().toISOString()
+        }
+      ]
+    };
+
+    const { error: updateError } = await supabase
+      .from('businesses')
+      .update({
+        trial_ends_at: new Date(updatedSubscription.trial_end! * 1000).toISOString(),
+        settings: updatedSettings,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', businessId);
+
+    if (updateError) {
+      console.error('Error updating business:', updateError);
+    }
+
+    // Log de extensión de trial
+    console.log(`🎯 Trial extendido por admin ${user.email}:`, {
+      businessId,
+      businessName: business.name,
+      additionalDays,
+      reason,
+      newTrialEnd: new Date(updatedSubscription.trial_end! * 1000).toISOString()
+    });
+
+    return c.json({
+      success: true,
+      message: `Trial extendido exitosamente por ${additionalDays} días adicionales`,
+      business: {
+        id: business.id,
+        name: business.name,
+        newTrialEnd: new Date(updatedSubscription.trial_end! * 1000).toISOString()
+      },
+      subscription: {
+        id: updatedSubscription.id,
+        status: updatedSubscription.status,
+        trialEnd: updatedSubscription.trial_end,
+        currentPeriodEnd: updatedSubscription.current_period_end
+      }
+    });
+
+  } catch (error) {
+    console.error('Error extending trial by admin:', error);
     const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
     return c.json({ 
       error: 'Error al extender el trial',

@@ -46,6 +46,12 @@ export const trialActivationSchema = z.object({
     errorMap: () => ({ message: "Moneda inválida. Solo se permiten: MXN, USD" })
   }).default("MXN"),
   
+  // Trial dinámico (opcional, para casos especiales como consultorías)
+  trialDays: z.number()
+    .min(1, "El trial debe ser de al menos 1 día")
+    .max(365, "El trial no puede exceder 365 días")
+    .optional(),
+  
   paymentMethod: z.object({
     type: z.enum(["card"], {
       errorMap: () => ({ message: "Tipo de método de pago inválido" })
