@@ -22,7 +22,7 @@ export function createSupabaseClient() {
         update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
         delete: () => ({ eq: () => Promise.resolve({ data: null, error: null }) })
       })
-    } as any;
+    } as unknown as ReturnType<typeof createClient>;
   }
 
   return createClient(supabaseUrl, supabaseServiceKey, {
