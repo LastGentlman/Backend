@@ -344,6 +344,41 @@ auth.get("/me", async (c) => {
       return c.json({ error: "User not found" }, 401);
     }
 
+    const supabase = getSupabaseClient();
+
+    // 🔒 NEW: Ensure profile exists, create if missing
+    try {
+      const { data: _profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('current_business_id')
+        .eq('id', user.id)
+        .single();
+
+      if (profileError && profileError.code === 'PGRST116') {
+        // Profile doesn't exist, create it
+        console.log(`Creating missing profile for user: ${user.email}`);
+        const { error: createError } = await supabase
+          .from('profiles')
+          .insert({
+            id: user.id,
+            email: user.email,
+            name: (user as unknown as { user_metadata?: { name?: string } }).user_metadata?.name || user.email?.split('@')[0] || 'Usuario',
+            avatar_url: (user as unknown as { user_metadata?: { avatar_url?: string } }).user_metadata?.avatar_url,
+            created_at: new Date().toISOString()
+          });
+
+        if (createError) {
+          console.warn('Could not create profile:', createError);
+        } else {
+          console.log(`Profile created successfully for user: ${user.email}`);
+        }
+      } else if (profileError) {
+        console.warn('Error fetching profile:', profileError);
+      }
+    } catch (profileError) {
+      console.warn('Error handling profile:', profileError);
+    }
+
     // Return user data in the format expected by frontend
     return c.json({
       id: user.id,
