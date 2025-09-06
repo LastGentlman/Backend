@@ -1,8 +1,8 @@
 import { Context } from "hono";
-import { RedisService } from "../services/RedisService.ts";
+import { VercelKVService } from "../services/VercelKVService.ts";
 
-// Redis-backed CSRF token storage (fallback handled by RedisService)
-const redis = RedisService.getInstance();
+// Vercel KV-backed CSRF token storage
+const kv = VercelKVService.getInstance();
 const CSRF_PREFIX = "csrf";
 const CSRF_TTL_SECONDS = 30 * 60; // 30 minutes
 
@@ -15,7 +15,7 @@ export function generateCSRFToken(sessionId: string): string {
   const key = `${CSRF_PREFIX}:${sessionId}`;
   console.log(`🔑 Generating CSRF token - Key: ${key}, Token: ${token}`);
   // Best effort async set, ignore errors to avoid crashing request path
-  redis.setex(key, CSRF_TTL_SECONDS, token).catch((error) => {
+  kv.setex(key, CSRF_TTL_SECONDS, token).catch((error) => {
     console.error(`❌ Failed to store CSRF token:`, error);
   });
   
@@ -37,7 +37,7 @@ export function validateCSRFToken(sessionId: string, _token: string): boolean {
 export async function validateCSRFTokenAsync(sessionId: string, token: string): Promise<boolean> {
   try {
     const key = `${CSRF_PREFIX}:${sessionId}`;
-    const stored = await redis.get(key);
+    const stored = await kv.get(key);
     console.log(`🔍 CSRF Validation - Key: ${key}, Stored: ${stored}, Provided: ${token}`);
     if (!stored) {
       console.log(`❌ CSRF token not found for session: ${sessionId}`);

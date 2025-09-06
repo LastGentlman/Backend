@@ -1,5 +1,5 @@
 import { getSupabaseClient } from '../utils/supabase.ts';
-import { RedisService } from './RedisService.ts';
+import { VercelKVService } from './VercelKVService.ts';
 
 export interface TokenInfo {
   userId: string;
@@ -16,8 +16,8 @@ export interface CompromisedAccount {
   markedBy: string;
 }
 
-// Redis-backed stores
-const redis = RedisService.getInstance();
+// Vercel KV-backed stores
+const kv = VercelKVService.getInstance();
 const BLACKLIST_SET = 'auth:blacklist';
 const BLACKLIST_META_PREFIX = 'auth:blacklist:meta'; // key per token -> JSON with reason + ts, TTL
 const COMPROMISED_SET = 'auth:compromised';
@@ -92,7 +92,7 @@ export class TokenManagementService {
 
   public async isTokenBlacklistedAsync(token: string): Promise<boolean> {
     try {
-      return await redis.sismember(BLACKLIST_SET, token);
+      return await kv.sismember(BLACKLIST_SET, token);
     } catch {
       return false;
     }
@@ -105,8 +105,8 @@ export class TokenManagementService {
     const metaKey = `${BLACKLIST_META_PREFIX}:${token}`;
     const meta = JSON.stringify({ reason, blacklistedAt: new Date().toISOString() });
     // Best effort async writes
-    redis.sadd(BLACKLIST_SET, token).catch(() => {});
-    redis.setex(metaKey, BLACKLIST_TTL_SECONDS, meta).catch(() => {});
+    kv.sadd(BLACKLIST_SET, token).catch(() => {});
+    kv.setex(metaKey, BLACKLIST_TTL_SECONDS, meta).catch(() => {});
     console.warn(`🚫 Token blacklisted: ${token.substring(0, 20)}... (${reason})`);
   }
 
@@ -119,7 +119,7 @@ export class TokenManagementService {
 
   public async isAccountCompromisedAsync(userId: string): Promise<boolean> {
     try {
-      return await redis.sismember(COMPROMISED_SET, userId);
+      return await kv.sismember(COMPROMISED_SET, userId);
     } catch {
       return false;
     }
@@ -131,8 +131,8 @@ export class TokenManagementService {
   public markAccountAsCompromised(userId: string, reason: string, markedBy: string): void {
     const metaKey = `${COMPROMISED_META_PREFIX}:${userId}`;
     const meta = JSON.stringify({ userId, reason, markedAt: new Date().toISOString(), markedBy });
-    redis.sadd(COMPROMISED_SET, userId).catch(() => {});
-    redis.set(metaKey, meta).catch(() => {});
+    kv.sadd(COMPROMISED_SET, userId).catch(() => {});
+    kv.set(metaKey, meta).catch(() => {});
     console.warn(`🚨 Account marked as compromised: ${userId} (${reason})`);
   }
 
@@ -141,8 +141,8 @@ export class TokenManagementService {
    */
   public recoverAccount(userId: string): boolean {
     const metaKey = `${COMPROMISED_META_PREFIX}:${userId}`;
-    redis.srem(COMPROMISED_SET, userId).catch(() => {});
-    redis.del(metaKey).catch(() => {});
+    kv.srem(COMPROMISED_SET, userId).catch(() => {});
+    kv.del(metaKey).catch(() => {});
     return true;
   }
 
@@ -156,7 +156,7 @@ export class TokenManagementService {
   public async getCompromisedAccountInfoAsync(userId: string): Promise<CompromisedAccount | undefined> {
     try {
       const metaKey = `${COMPROMISED_META_PREFIX}:${userId}`;
-      const raw = await redis.get(metaKey);
+      const raw = await kv.get(metaKey);
       if (!raw) return undefined;
       const parsed = JSON.parse(raw);
       return { ...parsed, markedAt: new Date(parsed.markedAt) } as CompromisedAccount;
@@ -303,8 +303,8 @@ export class TokenManagementService {
   }> {
     try {
       const [bl, ca] = await Promise.all([
-        redis.scard(BLACKLIST_SET),
-        redis.scard(COMPROMISED_SET)
+        kv.scard(BLACKLIST_SET),
+        kv.scard(COMPROMISED_SET)
       ]);
       return { blacklistedTokens: bl, compromisedAccounts: ca };
     } catch {

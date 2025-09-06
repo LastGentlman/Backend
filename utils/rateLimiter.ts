@@ -1,13 +1,13 @@
 import { Context, Next } from "hono";
 import { getEnvironmentConfig } from "./config.ts";
-import { RedisService } from "../services/RedisService.ts";
+import { VercelKVService } from "../services/VercelKVService.ts";
 
 interface RateLimitConfig {
   windowMs: number; // Ventana de tiempo en ms
   maxRequests: number; // Máximo de requests por ventana
 }
 
-const redis = RedisService.getInstance();
+const kv = VercelKVService.getInstance();
 const RL_PREFIX = "rate_limit";
 const RL_ENHANCED_PREFIX = "enhanced_rate_limit";
 const RL_FAIL_PREFIX = "enhanced_fail";
@@ -20,12 +20,12 @@ export function createRateLimiter(config: RateLimitConfig) {
     
     const windowSec = Math.ceil(config.windowMs / 1000);
     const key = `${RL_PREFIX}:${ip}`;
-    const count = await redis.incr(key);
+    const count = await kv.incr(key);
     // Set expiry if first increment
     if (count === 1) {
-      await redis.expire(key, windowSec);
+      await kv.expire(key, windowSec);
     }
-    const ttl = await redis.ttl(key);
+    const ttl = await kv.ttl(key);
     const retryAfter = ttl > 0 ? ttl : windowSec;
     const resetDate = new Date(Date.now() + retryAfter * 1000).toISOString();
     
@@ -76,17 +76,17 @@ export function createEnhancedRateLimiter(config: RateLimitConfig) {
     const userAgent = c.req.header("user-agent") || "unknown";
     const windowSec = Math.ceil(config.windowMs / 1000);
     const key = `${RL_ENHANCED_PREFIX}:${ip}:${userAgent}`;
-    const count = await redis.incr(key);
+    const count = await kv.incr(key);
     if (count === 1) {
-      await redis.expire(key, windowSec);
+      await kv.expire(key, windowSec);
     }
-    const ttl = await redis.ttl(key);
+    const ttl = await kv.ttl(key);
     const retryAfter = ttl > 0 ? ttl : windowSec;
     const resetDate = new Date(Date.now() + retryAfter * 1000).toISOString();
 
     // Check failure counter for circuit breaker
     const failKey = `${RL_FAIL_PREFIX}:${ip}:${userAgent}`;
-    const failCountRaw = await redis.get(failKey);
+    const failCountRaw = await kv.get(failKey);
     const failCount = parseInt(failCountRaw ?? "0", 10) || 0;
     if (failCount >= 3) {
       console.error(`🚨 Enhanced circuit breaker for IP: ${ip}, UA: ${userAgent}`);
@@ -195,9 +195,9 @@ export function smartRateLimiter() {
 export function trackFailure(ip: string, userAgent: string = "unknown") {
   const windowSec = Math.ceil(getEnvironmentConfig().rateLimiting.windowMs / 1000);
   const failKey = `${RL_FAIL_PREFIX}:${ip}:${userAgent}`;
-  redis.incr(failKey).then((count) => {
+  kv.incr(failKey).then((count) => {
     if (count === 1) {
-      redis.expire(failKey, windowSec).catch(() => {});
+      kv.expire(failKey, windowSec).catch(() => {});
     }
   }).catch(() => {});
 }
@@ -205,5 +205,5 @@ export function trackFailure(ip: string, userAgent: string = "unknown") {
 // ✅ NEW: Function to reset failure count on success
 export function resetFailureCount(ip: string, userAgent: string = "unknown") {
   const failKey = `${RL_FAIL_PREFIX}:${ip}:${userAgent}`;
-  redis.del(failKey).catch(() => {});
+  kv.del(failKey).catch(() => {});
 } 

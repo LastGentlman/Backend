@@ -6,7 +6,7 @@ import { getSupabaseClient as _getSupabaseClient } from "./utils/supabase.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 import { csrfProtection } from "./utils/csrf.ts";
 import { securityHeadersMiddleware } from "./utils/security.ts";
-import { RedisService } from "./services/RedisService.ts";
+import { VercelKVService } from "./services/VercelKVService.ts";
 
 // Importar rutas
 import testRoutes from "./routes/test.ts";
@@ -63,16 +63,12 @@ const config = getEnvironmentConfig();
 // Supabase client will be initialized on first use
 console.log("✅ Supabase client ready (lazy loading)");
 
-// ===== REDIS INITIALIZATION =====
+// ===== VERCEL KV INITIALIZATION =====
 try {
-  const redisHostname = Deno.env.get("REDIS_HOST") || "localhost";
-  const redisPort = parseInt(Deno.env.get("REDIS_PORT") || "6379");
-  const redisPassword = Deno.env.get("REDIS_PASSWORD") || undefined;
-  const redisDb = Deno.env.get("REDIS_DB") ? parseInt(Deno.env.get("REDIS_DB")!) : undefined;
-  RedisService.getInstance().connect({ hostname: redisHostname, port: redisPort, password: redisPassword, db: redisDb });
-  console.log("✅ RedisService initialized");
+  VercelKVService.getInstance().connect({});
+  console.log("✅ VercelKVService initialized");
 } catch (e) {
-  console.warn("⚠️ RedisService initialization failed, using in-memory fallback:", e);
+  console.warn("⚠️ VercelKVService initialization failed:", e);
 }
 
 // ===== INICIALIZACIÓN DE LA APP =====
