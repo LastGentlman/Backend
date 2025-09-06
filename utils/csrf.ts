@@ -13,8 +13,11 @@ export function generateCSRFToken(sessionId: string): string {
   const token = crypto.randomUUID();
   // Store token in Redis with TTL
   const key = `${CSRF_PREFIX}:${sessionId}`;
+  console.log(`🔑 Generating CSRF token - Key: ${key}, Token: ${token}`);
   // Best effort async set, ignore errors to avoid crashing request path
-  redis.setex(key, CSRF_TTL_SECONDS, token).catch(() => {});
+  redis.setex(key, CSRF_TTL_SECONDS, token).catch((error) => {
+    console.error(`❌ Failed to store CSRF token:`, error);
+  });
   
   return token;
 }
@@ -35,9 +38,16 @@ export async function validateCSRFTokenAsync(sessionId: string, token: string): 
   try {
     const key = `${CSRF_PREFIX}:${sessionId}`;
     const stored = await redis.get(key);
-    if (!stored) return false;
-    return stored === token;
-  } catch {
+    console.log(`🔍 CSRF Validation - Key: ${key}, Stored: ${stored}, Provided: ${token}`);
+    if (!stored) {
+      console.log(`❌ CSRF token not found for session: ${sessionId}`);
+      return false;
+    }
+    const isValid = stored === token;
+    console.log(`🔒 CSRF token validation result: ${isValid}`);
+    return isValid;
+  } catch (error) {
+    console.error(`❌ CSRF validation error:`, error);
     return false;
   }
 }
@@ -72,7 +82,10 @@ export function csrfProtection() {
       const sessionId = c.req.header('X-Session-ID');
       const csrfToken = c.req.header('X-CSRF-Token');
       
+      console.log(`🛡️ CSRF Protection - Path: ${path}, SessionID: ${sessionId}, Token: ${csrfToken}`);
+      
       if (!sessionId || !csrfToken) {
+        console.log(`❌ Missing CSRF headers - SessionID: ${!!sessionId}, Token: ${!!csrfToken}`);
         return c.json({
           error: 'CSRF token requerido',
           code: 'CSRF_TOKEN_MISSING'

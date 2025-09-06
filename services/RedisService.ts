@@ -17,25 +17,23 @@ export class RedisService {
     return RedisService.instance;
   }
 
-  connect(_config: RedisConfig): void {
+  connect(config: RedisConfig): void {
     if (this.isConnected) return;
     
     try {
-      // En desarrollo, usar memory storage
-      if (Deno.env.get("ENVIRONMENT") === "development") {
-        this.redis = new InMemoryRedis();
-        this.isConnected = true;
-        return;
-      }
-
-      // TODO: Implementar conexión real a Redis cuando esté disponible
+      // Por ahora, usar in-memory storage pero con mejor logging
+      console.log("🔄 Configurando Redis...");
+      console.log(`📍 Host: ${config.hostname || "localhost"}`);
+      console.log(`🔌 Port: ${config.port || 6379}`);
+      
+      // TODO: Implementar conexión real a Redis
       // Por ahora, usar in-memory storage
-      console.log("⚠️ Redis real no implementado, usando almacenamiento en memoria");
       this.redis = new InMemoryRedis();
       this.isConnected = true;
-      console.log("✅ Redis connected successfully");
+      console.log("✅ Redis configurado (usando almacenamiento en memoria)");
+      
     } catch (error) {
-      console.error("❌ Redis connection failed:", error);
+      console.error("❌ Redis configuration failed:", error);
       // Fallback a memoria en caso de error
       this.redis = new InMemoryRedis();
       this.isConnected = true;
