@@ -86,28 +86,29 @@ business.post("/activate-trial", async (c) => {
       }
     }
 
-    // 3. Crear suscripción con trial dinámico
-    // Determinar el precio y trial basado en configuración dinámica
-    let priceId: string;
+    // 3. Crear trial gratuito (7 días sin método de pago)
+    // Lógica correcta: Trial gratuito = precio one_time de $0
+    let subscription: { id: string; trial_end: number | null; status: string; current_period_end: number };
+    const trialDays = validatedData.trialDays || 7;
     
-    // Lógica de trial dinámico: SIEMPRE 7 días iniciales
-    // Si hay método de pago desde el inicio, usar precio mensual
     if (paymentMethodId) {
-      priceId = await stripe.getPriceByLookupKey('price_monthly');
+      // Si hay método de pago, crear suscripción mensual con trial
+      const priceId = await stripe.getPriceByLookupKey('price_monthly');
+      subscription = await stripe.createSubscriptionWithTrial(
+        stripeCustomer.id,
+        priceId,
+        trialDays,
+        paymentMethodId
+      );
     } else {
-      // Si no hay método de pago, usar precio gratuito
-      priceId = await stripe.getPriceByLookupKey('price_free_trial');
+      // Si NO hay método de pago, crear trial gratuito (one_time)
+      const freeTrialPriceId = await stripe.getPriceByLookupKey('price_free_trial');
+      subscription = await stripe.createFreeTrial(
+        stripeCustomer.id,
+        freeTrialPriceId,
+        trialDays
+      );
     }
-    
-    // SIEMPRE empezar con 7 días (a menos que sea trial personalizado)
-    const trialDays = validatedData.trialDays || 7; // Default 7 días iniciales
-    
-    const subscription = await stripe.createSubscriptionWithTrial(
-      stripeCustomer.id,
-      priceId,
-      trialDays,
-      paymentMethodId
-    );
 
     // 4. Crear negocio en la base de datos
     const { data: business, error: businessError } = await supabase
@@ -341,17 +342,27 @@ business.post("/create-with-custom-trial", async (c) => {
       }
     }
 
-    // 3. Crear suscripción con trial personalizado
-    const priceId = paymentMethodId 
-      ? await stripe.getPriceByLookupKey('price_monthly')
-      : await stripe.getPriceByLookupKey('price_free_trial');
+    // 3. Crear trial personalizado
+    let subscription: { id: string; trial_end: number | null; status: string; current_period_end: number };
     
-    const subscription = await stripe.createSubscriptionWithTrial(
-      stripeCustomer.id,
-      priceId,
-      validatedData.trialDays, // Trial personalizado
-      paymentMethodId
-    );
+    if (paymentMethodId) {
+      // Si hay método de pago, crear suscripción mensual con trial personalizado
+      const priceId = await stripe.getPriceByLookupKey('price_monthly');
+      subscription = await stripe.createSubscriptionWithTrial(
+        stripeCustomer.id,
+        priceId,
+        validatedData.trialDays,
+        paymentMethodId
+      );
+    } else {
+      // Si NO hay método de pago, crear trial gratuito personalizado
+      const freeTrialPriceId = await stripe.getPriceByLookupKey('price_free_trial');
+      subscription = await stripe.createFreeTrial(
+        stripeCustomer.id,
+        freeTrialPriceId,
+        validatedData.trialDays
+      );
+    }
 
     // 4. Crear negocio en la base de datos con metadata especial
     const { data: business, error: businessError } = await supabase

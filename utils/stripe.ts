@@ -50,7 +50,7 @@ export class StripeClient {
     });
   }
 
-  // Crear suscripción con trial
+  // Crear suscripción con trial (para casos con método de pago)
   async createSubscriptionWithTrial(
     customerId: string, 
     priceId: string, 
@@ -61,15 +61,48 @@ export class StripeClient {
       customer: customerId,
       items: [{ price: priceId }],
       trial_period_days: trialDays,
-      payment_behavior: 'default_incomplete',
       expand: ['latest_invoice.payment_intent'],
     };
 
     if (paymentMethodId) {
+      // Si hay método de pago, configurar para cobro automático después del trial
       subscriptionData.default_payment_method = paymentMethodId;
+      subscriptionData.payment_behavior = 'default_incomplete';
+    } else {
+      // Si no hay método de pago, crear suscripción que requerirá método de pago al final del trial
+      subscriptionData.payment_behavior = 'default_incomplete';
+      subscriptionData.payment_settings = {
+        save_default_payment_method: 'on_subscription'
+      };
     }
 
     return await this.stripe.subscriptions.create(subscriptionData);
+  }
+
+  // Crear trial gratuito (sin suscripción, solo período de prueba)
+  async createFreeTrial(
+    customerId: string, 
+    freeTrialPriceId: string, 
+    trialDays: number = 7
+  ): Promise<{ id: string; trial_end: number | null; status: string; current_period_end: number }> {
+    // Para trial gratuito, crear una suscripción con precio one_time de $0
+    // pero que expire automáticamente después del trial
+    const subscriptionData: Stripe.SubscriptionCreateParams = {
+      customer: customerId,
+      items: [{ price: freeTrialPriceId }],
+      trial_period_days: trialDays,
+      payment_behavior: 'default_incomplete',
+      expand: ['latest_invoice.payment_intent'],
+    };
+
+    const subscription = await this.stripe.subscriptions.create(subscriptionData);
+    
+    return {
+      id: subscription.id,
+      trial_end: subscription.trial_end!,
+      status: subscription.status,
+      current_period_end: subscription.current_period_end
+    };
   }
 
   // Obtener precio por ID
