@@ -7,10 +7,12 @@ import { emailNotificationService } from "../services/EmailNotificationService.t
 import { getStripeClient } from "../utils/stripe.ts";
 import { getTaxRegimeByCode, isValidTaxRegime as _isValidTaxRegime } from "../utils/taxRegimes.ts";
 import { validateData, employeeInvitationSchema, trialActivationSchema, businessSettingsUpdateSchema } from "../utils/validation.ts";
+import { getUserFromToken } from "../utils/supabase.ts";
 import type { TrialActivationRequest as _TrialActivationRequest, TrialActivationResponse } from "../types/business.ts";
 import type { Price as _Price } from "../types/stripe.ts";
 
 const business = new Hono();
+const supabase = getSupabaseClient();
 
 // ===== ACTIVACIÓN DE TRIAL =====
 
@@ -86,27 +88,27 @@ business.post("/activate-trial", async (c) => {
       }
     }
 
-    // 3. Crear trial gratuito (7 días sin método de pago)
-    // Lógica correcta: Trial gratuito = precio one_time de $0
+    // 3. Crear trial gratuito (7 días base + 7 días adicionales si agrega método de pago)
     let subscription: { id: string; trial_end: number | null; status: string; current_period_end: number };
-    const trialDays = validatedData.trialDays || 7;
+    const baseTrialDays = 7; // 7 días base sin método de pago
+    const extendedTrialDays = paymentMethodId ? 14 : 7; // 7 días adicionales si agrega método de pago
     
     if (paymentMethodId) {
-      // Si hay método de pago, crear suscripción mensual con trial
+      // Si hay método de pago, crear suscripción mensual con trial extendido (14 días total)
       const priceId = await stripe.getPriceByLookupKey('price_monthly');
       subscription = await stripe.createSubscriptionWithTrial(
         stripeCustomer.id,
         priceId,
-        trialDays,
+        extendedTrialDays,
         paymentMethodId
       );
     } else {
-      // Si NO hay método de pago, crear trial gratuito (one_time)
+      // Si NO hay método de pago, crear trial gratuito base (7 días)
       const freeTrialPriceId = await stripe.getPriceByLookupKey('price_free_trial');
       subscription = await stripe.createFreeTrial(
         stripeCustomer.id,
         freeTrialPriceId,
-        trialDays
+        baseTrialDays
       );
     }
 
@@ -577,6 +579,126 @@ business.post("/extend-trial", async (c) => {
   }
 });
 
+// ===== EXTENSIÓN DE TRIAL POR USUARIO (AGREGAR MÉTODO DE PAGO) =====
+
+// Extender trial cuando usuario agrega método de pago (7 días adicionales)
+business.post("/extend-trial-with-payment", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Token de autorización requerido" }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const user = await getUserFromToken(token);
+    if (!user) {
+      return c.json({ error: "Usuario no encontrado" }, 401);
+    }
+
+    const requestData = await c.req.json();
+    
+    const paymentMethodSchema = z.object({
+      paymentMethod: z.object({
+        type: z.string(),
+        card: z.object({
+          number: z.string(),
+          exp_month: z.number(),
+          exp_year: z.number(),
+          cvc: z.string()
+        })
+      })
+    });
+
+    const validation = validateData(paymentMethodSchema, requestData);
+
+    if (!validation.success) {
+      return c.json({ 
+        error: "Datos de pago inválidos",
+        issues: validation.errors?.issues.map((issue: { path: (string | number)[]; message: string }) => ({
+          field: issue.path?.join('.'),
+          message: issue.message
+        }))
+      }, 400);
+    }
+
+    const validatedData = validation.data as {
+      paymentMethod: { type: string; card: { number: string; exp_month: number; exp_year: number; cvc: string } };
+    };
+
+    // 1. Obtener el negocio del usuario
+    const { data: business, error: businessError } = await supabase
+      .from('businesses')
+      .select('id, name, stripe_customer_id, stripe_subscription_id, trial_ends_at, settings')
+      .eq('owner_id', user.id)
+      .single();
+
+    if (businessError || !business) {
+      return c.json({ error: "Negocio no encontrado" }, 404);
+    }
+
+    // 2. Verificar que el trial aún esté activo
+    const stripe = getStripeClient();
+    const subscription = await stripe.getSubscription(business.stripe_subscription_id);
+    if (!subscription || subscription.status !== 'trialing') {
+      return c.json({ 
+        error: "El trial ya ha expirado o no está activo" 
+      }, 400);
+    }
+
+    // 3. Crear método de pago
+    const paymentMethod = await stripe.createPaymentMethod(
+      validatedData.paymentMethod.type,
+      validatedData.paymentMethod.card
+    );
+    
+    await stripe.attachPaymentMethodToCustomer(paymentMethod.id, business.stripe_customer_id);
+
+    // 4. Extender el trial por 7 días adicionales
+    const updatedSubscription = await stripe.extendTrial(
+      business.stripe_subscription_id,
+      paymentMethod.id,
+      7 // 7 días adicionales
+    );
+
+    // 5. Actualizar el negocio
+    const currentSettings = business.settings || {};
+    const updatedSettings = {
+      ...currentSettings,
+      trialExtended: true,
+      paymentMethodAdded: true,
+      extendedAt: new Date().toISOString(),
+      totalTrialDays: 14 // 7 días base + 7 días adicionales
+    };
+
+    const { error: updateError } = await supabase
+      .from('businesses')
+      .update({
+        trial_ends_at: new Date(updatedSubscription.trial_end! * 1000).toISOString(),
+        settings: updatedSettings,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', business.id);
+
+    if (updateError) {
+      console.error('Error updating business:', updateError);
+    }
+
+    return c.json({
+      success: true,
+      message: "Trial extendido exitosamente por 7 días adicionales",
+      trialEndsAt: new Date(updatedSubscription.trial_end! * 1000).toISOString(),
+      totalTrialDays: 14
+    });
+
+  } catch (error) {
+    console.error('Error extending trial:', error);
+    return c.json({ 
+      error: 'Error al extender el trial',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    }, 500);
+  }
+});
+
 // ===== EXTENSIÓN DE TRIAL POR ADMINISTRADOR =====
 
 // Extender trial de cualquier negocio (solo administradores)
@@ -765,6 +887,133 @@ business.get("/prices", async (c) => {
     console.error('Error fetching prices:', error);
     return c.json({ 
       error: 'Error al obtener precios',
+      details: error instanceof Error ? error.message : 'Error desconocido'
+    }, 500);
+  }
+});
+
+// ===== CAMBIO DE PLAN DE SUSCRIPCIÓN =====
+
+// Cambiar plan de suscripción (mensual, anual, vitalicio)
+business.post("/change-plan", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Token de autorización requerido" }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const user = await getUserFromToken(token);
+    if (!user) {
+      return c.json({ error: "Usuario no encontrado" }, 401);
+    }
+
+    const requestData = await c.req.json();
+    
+    const planTypeSchema = z.object({
+      planType: z.enum(['monthly', 'yearly', 'lifetime'])
+    });
+
+    const validation = validateData(planTypeSchema, requestData);
+
+    if (!validation.success) {
+      return c.json({ 
+        error: "Tipo de plan inválido",
+        issues: validation.errors?.issues.map((issue: { path: (string | number)[]; message: string }) => ({
+          field: issue.path?.join('.'),
+          message: issue.message
+        }))
+      }, 400);
+    }
+
+    const { planType } = validation.data as { planType: 'monthly' | 'yearly' | 'lifetime' };
+
+    // 1. Obtener el negocio del usuario
+    const { data: business, error: businessError } = await supabase
+      .from('businesses')
+      .select('id, name, stripe_customer_id, stripe_subscription_id, settings')
+      .eq('owner_id', user.id)
+      .single();
+
+    if (businessError || !business) {
+      return c.json({ error: "Negocio no encontrado" }, 404);
+    }
+
+    const stripe = getStripeClient();
+
+    // 2. Determinar el precio según el tipo de plan
+    let priceId: string;
+    let planName: string;
+    let amount: number;
+
+    switch (planType) {
+      case 'monthly':
+        priceId = await stripe.getPriceByLookupKey('price_monthly');
+        planName = 'Plan Mensual';
+        amount = 275; // $275 MXN
+        break;
+      case 'yearly':
+        priceId = await stripe.getPriceByLookupKey('price_yearly');
+        planName = 'Plan Anual';
+        amount = 2750; // $2,750 MXN
+        break;
+      case 'lifetime':
+        priceId = await stripe.getPriceByLookupKey('price_full');
+        planName = 'Licencia Vitalicia';
+        amount = 39500; // $39,500 MXN
+        break;
+      default:
+        return c.json({ error: "Tipo de plan no válido" }, 400);
+    }
+
+    // 3. Cambiar la suscripción
+    const updatedSubscription = await stripe.changeSubscriptionPlan(
+      business.stripe_subscription_id,
+      priceId
+    );
+
+    // 4. Actualizar el negocio
+    const currentSettings = business.settings || {};
+    const updatedSettings = {
+      ...currentSettings,
+      currentPlan: planType,
+      planName: planName,
+      planAmount: amount,
+      planChangedAt: new Date().toISOString()
+    };
+
+    const { error: updateError } = await supabase
+      .from('businesses')
+      .update({
+        settings: updatedSettings,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', business.id);
+
+    if (updateError) {
+      console.error('Error updating business:', updateError);
+    }
+
+    return c.json({
+      success: true,
+      message: `Plan cambiado exitosamente a ${planName}`,
+      plan: {
+        type: planType,
+        name: planName,
+        amount: amount,
+        currency: 'MXN'
+      },
+      subscription: {
+        id: updatedSubscription.id,
+        status: updatedSubscription.status,
+        current_period_end: updatedSubscription.current_period_end
+      }
+    });
+
+  } catch (error) {
+    console.error('Error changing plan:', error);
+    return c.json({ 
+      error: 'Error al cambiar el plan',
       details: error instanceof Error ? error.message : 'Error desconocido'
     }, 500);
   }

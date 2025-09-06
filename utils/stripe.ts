@@ -143,26 +143,39 @@ export class StripeClient {
     return await this.stripe.subscriptions.retrieve(subscriptionId);
   }
 
-  // Extender trial de una suscripción existente
+  // Extender trial de una suscripción
   async extendTrial(
     subscriptionId: string, 
     paymentMethodId: string, 
     additionalDays: number
   ): Promise<Stripe.Subscription> {
-    // Obtener la suscripción actual
-    const subscription = await this.getSubscription(subscriptionId);
+    const subscription = await this.stripe.subscriptions.retrieve(subscriptionId);
     
-    // Calcular la nueva fecha de fin del trial
-    const currentTrialEnd = subscription.trial_end || Math.floor(Date.now() / 1000);
-    const newTrialEnd = currentTrialEnd + (additionalDays * 24 * 60 * 60);
-
-    // Actualizar la suscripción
+    // Actualizar la suscripción con método de pago y extender trial
     return await this.stripe.subscriptions.update(subscriptionId, {
       default_payment_method: paymentMethodId,
-      trial_end: newTrialEnd,
+      trial_end: subscription.trial_end! + (additionalDays * 24 * 60 * 60), // Convertir días a segundos
       payment_behavior: 'default_incomplete'
     });
   }
+
+  // Cambiar plan de suscripción
+  async changeSubscriptionPlan(
+    subscriptionId: string, 
+    newPriceId: string
+  ): Promise<Stripe.Subscription> {
+    const subscription = await this.stripe.subscriptions.retrieve(subscriptionId);
+    
+    // Actualizar el precio de la suscripción
+    return await this.stripe.subscriptions.update(subscriptionId, {
+      items: [{
+        id: subscription.items.data[0].id,
+        price: newPriceId,
+      }],
+      proration_behavior: 'create_prorations'
+    });
+  }
+
 }
 
 // Singleton instance
