@@ -20,6 +20,7 @@ import monitoringRoutes from "./routes/monitoring.ts";
 import productsRoutes from "./routes/products.ts";
 import clientsRoutes from "./routes/clients.ts";
 import dashboardRoutes from "./routes/dashboard.ts";
+import backupRoutes from "./routes/backup.ts";
 
 // ===== LOAD ENVIRONMENT VARIABLES =====
 // Load .env file if it exists (for local development)
@@ -206,6 +207,7 @@ app.use("/api/business/*", csrfProtection());
 app.use("/api/products/*", csrfProtection());
 app.use("/api/clients/*", csrfProtection());
 app.use("/api/dashboard/*", csrfProtection());
+app.use("/api/backup/*", csrfProtection());
 app.use("/api/test/*", csrfProtection());
 app.use("/api/notifications/*", csrfProtection());
 
@@ -216,6 +218,7 @@ app.route("/api/business", businessRoutes);
 app.route("/api/products", productsRoutes);
 app.route("/api/clients", clientsRoutes);
 app.route("/api/dashboard", dashboardRoutes);
+app.route("/api/backup", backupRoutes);
 app.route("/api/notifications", notificationsRoutes);
 
 // ===== MANEJO DE RUTAS NO ENCONTRADAS =====
