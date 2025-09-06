@@ -1,8 +1,7 @@
 import { kv } from '@vercel/kv';
 
-interface VercelKVConfig {
-  // Vercel KV doesn't need connection config - it uses environment variables
-}
+// Vercel KV doesn't need connection config - it uses environment variables
+type VercelKVConfig = Record<string, never>;
 
 export class VercelKVService {
   private static instance: VercelKVService;
@@ -87,7 +86,7 @@ export class VercelKVService {
     if (!this.isConnected) throw new Error("Vercel KV not connected");
     
     try {
-      return await kv.sadd(key, ...members);
+      return await kv.sadd(key, members);
     } catch (error) {
       console.error("❌ Vercel KV sadd error:", error);
       throw error;
@@ -98,7 +97,7 @@ export class VercelKVService {
     if (!this.isConnected) throw new Error("Vercel KV not connected");
     
     try {
-      return await kv.srem(key, ...members);
+      return await kv.srem(key, members);
     } catch (error) {
       console.error("❌ Vercel KV srem error:", error);
       throw error;
@@ -131,7 +130,8 @@ export class VercelKVService {
     if (!this.isConnected) throw new Error("Vercel KV not connected");
     
     try {
-      return await kv.sismember(key, member);
+      const result = await kv.sismember(key, member);
+      return Boolean(result);
     } catch (error) {
       console.error("❌ Vercel KV sismember error:", error);
       return false;
@@ -153,7 +153,8 @@ export class VercelKVService {
     if (!this.isConnected) throw new Error("Vercel KV not connected");
     
     try {
-      return await kv.expire(key, seconds);
+      const result = await kv.expire(key, seconds);
+      return Boolean(result);
     } catch (error) {
       console.error("❌ Vercel KV expire error:", error);
       return false;
