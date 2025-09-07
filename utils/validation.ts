@@ -28,9 +28,26 @@ export const trialActivationSchema = z.object({
     .min(2, "El nombre de facturación debe tener al menos 2 caracteres")
     .max(100, "El nombre de facturación no puede exceder 100 caracteres"),
   
-  billingAddress: z.string()
-    .max(500, "La dirección de facturación no puede exceder 500 caracteres")
-    .optional(),
+  billingAddress: z.object({
+    line1: z.string()
+      .min(1, "La línea 1 de la dirección es requerida")
+      .max(255, "La línea 1 no puede exceder 255 caracteres"),
+    line2: z.string()
+      .max(255, "La línea 2 no puede exceder 255 caracteres")
+      .optional(),
+    city: z.string()
+      .min(1, "La ciudad es requerida")
+      .max(100, "La ciudad no puede exceder 100 caracteres"),
+    state: z.string()
+      .min(1, "El estado es requerido")
+      .max(100, "El estado no puede exceder 100 caracteres"),
+    postal_code: z.string()
+      .min(1, "El código postal es requerido")
+      .max(20, "El código postal no puede exceder 20 caracteres"),
+    country: z.string()
+      .min(1, "El país es requerido")
+      .max(100, "El país no puede exceder 100 caracteres")
+  }),
   
   taxId: z.string()
     .optional()
