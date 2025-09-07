@@ -104,10 +104,11 @@ business.post("/activate-trial", async (c) => {
       );
     } else {
       // Si NO hay método de pago, crear trial gratuito base (7 días)
-      const freeTrialPriceId = await stripe.getPriceByLookupKey('price_free_trial');
+      // Usar el precio mensual recurrente para evitar el error de "one_time" price type
+      const monthlyPriceId = await stripe.getPriceByLookupKey('price_monthly');
       subscription = await stripe.createFreeTrial(
         stripeCustomer.id,
-        freeTrialPriceId,
+        monthlyPriceId,
         baseTrialDays
       );
     }
@@ -358,10 +359,11 @@ business.post("/create-with-custom-trial", async (c) => {
       );
     } else {
       // Si NO hay método de pago, crear trial gratuito personalizado
-      const freeTrialPriceId = await stripe.getPriceByLookupKey('price_free_trial');
+      // Usar el precio mensual recurrente para evitar el error de "one_time" price type
+      const monthlyPriceId = await stripe.getPriceByLookupKey('price_monthly');
       subscription = await stripe.createFreeTrial(
         stripeCustomer.id,
-        freeTrialPriceId,
+        monthlyPriceId,
         validatedData.trialDays
       );
     }

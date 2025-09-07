@@ -82,14 +82,14 @@ export class StripeClient {
   // Crear trial gratuito (sin suscripción, solo período de prueba)
   async createFreeTrial(
     customerId: string, 
-    freeTrialPriceId: string, 
+    monthlyPriceId: string, 
     trialDays: number = 7
   ): Promise<{ id: string; trial_end: number | null; status: string; current_period_end: number }> {
-    // Para trial gratuito, crear una suscripción con precio one_time de $0
-    // pero que expire automáticamente después del trial
+    // Para trial gratuito, usar el precio mensual recurrente pero con trial
+    // Esto evita el error de "one_time" price type que no es compatible con trials
     const subscriptionData: Stripe.SubscriptionCreateParams = {
       customer: customerId,
-      items: [{ price: freeTrialPriceId }],
+      items: [{ price: monthlyPriceId }],
       trial_period_days: trialDays,
       payment_behavior: 'default_incomplete',
       expand: ['latest_invoice.payment_intent'],
