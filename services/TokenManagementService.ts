@@ -1,5 +1,5 @@
 import { getSupabaseClient } from '../utils/supabase.ts';
-import { VercelKVService } from './VercelKVService.ts';
+// Using in-memory storage for token management (can be moved to Supabase later)
 
 export interface TokenInfo {
   userId: string;
@@ -16,13 +16,12 @@ export interface CompromisedAccount {
   markedBy: string;
 }
 
-// Vercel KV-backed stores
-const kv = VercelKVService.getInstance();
-const BLACKLIST_SET = 'auth:blacklist';
-const BLACKLIST_META_PREFIX = 'auth:blacklist:meta'; // key per token -> JSON with reason + ts, TTL
-const COMPROMISED_SET = 'auth:compromised';
-const COMPROMISED_META_PREFIX = 'auth:compromised:meta'; // key per user -> JSON
-const BLACKLIST_TTL_SECONDS = 24 * 60 * 60; // 24h cleanup window
+// In-memory stores (for now - can be moved to Supabase later)
+const blacklistSet = new Set<string>();
+const compromisedSet = new Set<string>();
+const blacklistMeta = new Map<string, { reason: string; timestamp: number }>();
+const compromisedMeta = new Map<string, { userId: string; reason: string; markedAt: string; markedBy: string }>();
+
 
 export class TokenManagementService {
   private static instance: TokenManagementService;
@@ -90,11 +89,11 @@ export class TokenManagementService {
     throw new Error('Use isTokenBlacklistedAsync instead');
   }
 
-  public async isTokenBlacklistedAsync(token: string): Promise<boolean> {
+  public isTokenBlacklistedAsync(token: string): Promise<boolean> {
     try {
-      return await kv.sismember(BLACKLIST_SET, token);
+      return Promise.resolve(blacklistSet.has(token));
     } catch {
-      return false;
+      return Promise.resolve(false);
     }
   }
 
@@ -102,11 +101,9 @@ export class TokenManagementService {
    * Blacklists a token
    */
   public blacklistToken(token: string, reason: string = 'User logout'): void {
-    const metaKey = `${BLACKLIST_META_PREFIX}:${token}`;
-    const meta = JSON.stringify({ reason, blacklistedAt: new Date().toISOString() });
     // Best effort async writes
-    kv.sadd(BLACKLIST_SET, token).catch(() => {});
-    kv.setex(metaKey, BLACKLIST_TTL_SECONDS, meta).catch(() => {});
+    blacklistSet.add(token);
+    blacklistMeta.set(token, { reason, timestamp: Date.now() });
     console.warn(`🚫 Token blacklisted: ${token.substring(0, 20)}... (${reason})`);
   }
 
@@ -117,11 +114,11 @@ export class TokenManagementService {
     throw new Error('Use isAccountCompromisedAsync instead');
   }
 
-  public async isAccountCompromisedAsync(userId: string): Promise<boolean> {
+  public isAccountCompromisedAsync(userId: string): Promise<boolean> {
     try {
-      return await kv.sismember(COMPROMISED_SET, userId);
+      return Promise.resolve(compromisedSet.has(userId));
     } catch {
-      return false;
+      return Promise.resolve(false);
     }
   }
 
@@ -129,10 +126,8 @@ export class TokenManagementService {
    * Marks an account as compromised
    */
   public markAccountAsCompromised(userId: string, reason: string, markedBy: string): void {
-    const metaKey = `${COMPROMISED_META_PREFIX}:${userId}`;
-    const meta = JSON.stringify({ userId, reason, markedAt: new Date().toISOString(), markedBy });
-    kv.sadd(COMPROMISED_SET, userId).catch(() => {});
-    kv.set(metaKey, meta).catch(() => {});
+    compromisedSet.add(userId);
+    compromisedMeta.set(userId, { userId, reason, markedAt: new Date().toISOString(), markedBy });
     console.warn(`🚨 Account marked as compromised: ${userId} (${reason})`);
   }
 
@@ -140,9 +135,8 @@ export class TokenManagementService {
    * Recovers a compromised account
    */
   public recoverAccount(userId: string): boolean {
-    const metaKey = `${COMPROMISED_META_PREFIX}:${userId}`;
-    kv.srem(COMPROMISED_SET, userId).catch(() => {});
-    kv.del(metaKey).catch(() => {});
+    compromisedSet.delete(userId);
+    compromisedMeta.delete(userId);
     return true;
   }
 
@@ -153,15 +147,13 @@ export class TokenManagementService {
     throw new Error('Use getCompromisedAccountInfoAsync instead');
   }
 
-  public async getCompromisedAccountInfoAsync(userId: string): Promise<CompromisedAccount | undefined> {
+  public getCompromisedAccountInfoAsync(userId: string): Promise<CompromisedAccount | undefined> {
     try {
-      const metaKey = `${COMPROMISED_META_PREFIX}:${userId}`;
-      const raw = await kv.get(metaKey);
-      if (!raw) return undefined;
-      const parsed = JSON.parse(raw);
-      return { ...parsed, markedAt: new Date(parsed.markedAt) } as CompromisedAccount;
+      const raw = compromisedMeta.get(userId);
+      if (!raw) return Promise.resolve(undefined);
+      return Promise.resolve({ ...raw, markedAt: new Date(raw.markedAt) } as CompromisedAccount);
     } catch {
-      return undefined;
+      return Promise.resolve(undefined);
     }
   }
 
@@ -303,8 +295,8 @@ export class TokenManagementService {
   }> {
     try {
       const [bl, ca] = await Promise.all([
-        kv.scard(BLACKLIST_SET),
-        kv.scard(COMPROMISED_SET)
+        blacklistSet.size,
+        compromisedSet.size
       ]);
       return { blacklistedTokens: bl, compromisedAccounts: ca };
     } catch {

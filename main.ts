@@ -6,7 +6,7 @@ import { getSupabaseClient as _getSupabaseClient } from "./utils/supabase.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 import { csrfProtection } from "./utils/csrf.ts";
 import { securityHeadersMiddleware } from "./utils/security.ts";
-import { VercelKVService } from "./services/VercelKVService.ts";
+// Vercel KV removed - using Supabase for CSRF tokens
 
 // Importar rutas
 import testRoutes from "./routes/test.ts";
@@ -63,13 +63,9 @@ const config = getEnvironmentConfig();
 // Supabase client will be initialized on first use
 console.log("✅ Supabase client ready (lazy loading)");
 
-// ===== VERCEL KV INITIALIZATION =====
-try {
-  VercelKVService.getInstance().connect({});
-  console.log("✅ VercelKVService initialized");
-} catch (e) {
-  console.warn("⚠️ VercelKVService initialization failed:", e);
-}
+// ===== CSRF TOKENS =====
+// CSRF tokens now stored in Supabase (no separate service needed)
+console.log("✅ CSRF tokens will be stored in Supabase");
 
 // ===== INICIALIZACIÓN DE LA APP =====
 const isDev = config.name === 'development';

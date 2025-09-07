@@ -1,13 +1,16 @@
 import { Context, Next } from "hono";
 import { getEnvironmentConfig } from "./config.ts";
-import { VercelKVService } from "../services/VercelKVService.ts";
+// Using in-memory storage for rate limiting (can be moved to Supabase later)
 
 interface RateLimitConfig {
   windowMs: number; // Ventana de tiempo en ms
   maxRequests: number; // Máximo de requests por ventana
 }
 
-const kv = VercelKVService.getInstance();
+// In-memory rate limiting stores
+const rateLimitCounters = new Map<string, { count: number; resetTime: number }>();
+const enhancedRateLimitCounters = new Map<string, { count: number; resetTime: number }>();
+const failureCounters = new Map<string, { count: number; resetTime: number }>();
 const RL_PREFIX = "rate_limit";
 const RL_ENHANCED_PREFIX = "enhanced_rate_limit";
 const RL_FAIL_PREFIX = "enhanced_fail";
@@ -20,12 +23,18 @@ export function createRateLimiter(config: RateLimitConfig) {
     
     const windowSec = Math.ceil(config.windowMs / 1000);
     const key = `${RL_PREFIX}:${ip}`;
-    const count = await kv.incr(key);
-    // Set expiry if first increment
-    if (count === 1) {
-      await kv.expire(key, windowSec);
+    const now = Date.now();
+    const resetTime = now + config.windowMs;
+    
+    let counter = rateLimitCounters.get(key);
+    if (!counter || counter.resetTime < now) {
+      counter = { count: 0, resetTime };
+      rateLimitCounters.set(key, counter);
     }
-    const ttl = await kv.ttl(key);
+    
+    counter.count++;
+    const count = counter.count;
+    const ttl = Math.ceil((counter.resetTime - now) / 1000);
     const retryAfter = ttl > 0 ? ttl : windowSec;
     const resetDate = new Date(Date.now() + retryAfter * 1000).toISOString();
     
@@ -76,17 +85,25 @@ export function createEnhancedRateLimiter(config: RateLimitConfig) {
     const userAgent = c.req.header("user-agent") || "unknown";
     const windowSec = Math.ceil(config.windowMs / 1000);
     const key = `${RL_ENHANCED_PREFIX}:${ip}:${userAgent}`;
-    const count = await kv.incr(key);
-    if (count === 1) {
-      await kv.expire(key, windowSec);
+    const now = Date.now();
+    const resetTime = now + config.windowMs;
+    
+    let counter = enhancedRateLimitCounters.get(key);
+    if (!counter || counter.resetTime < now) {
+      counter = { count: 0, resetTime };
+      enhancedRateLimitCounters.set(key, counter);
     }
-    const ttl = await kv.ttl(key);
+    
+    counter.count++;
+    const count = counter.count;
+    const ttl = Math.ceil((counter.resetTime - now) / 1000);
     const retryAfter = ttl > 0 ? ttl : windowSec;
     const resetDate = new Date(Date.now() + retryAfter * 1000).toISOString();
 
     // Check failure counter for circuit breaker
     const failKey = `${RL_FAIL_PREFIX}:${ip}:${userAgent}`;
-    const failCountRaw = await kv.get(failKey);
+    const failCounter = failureCounters.get(failKey);
+    const failCountRaw = failCounter && failCounter.resetTime > Date.now() ? failCounter.count.toString() : "0";
     const failCount = parseInt(failCountRaw ?? "0", 10) || 0;
     if (failCount >= 3) {
       console.error(`🚨 Enhanced circuit breaker for IP: ${ip}, UA: ${userAgent}`);
@@ -195,15 +212,20 @@ export function smartRateLimiter() {
 export function trackFailure(ip: string, userAgent: string = "unknown") {
   const windowSec = Math.ceil(getEnvironmentConfig().rateLimiting.windowMs / 1000);
   const failKey = `${RL_FAIL_PREFIX}:${ip}:${userAgent}`;
-  kv.incr(failKey).then((count) => {
-    if (count === 1) {
-      kv.expire(failKey, windowSec).catch(() => {});
-    }
-  }).catch(() => {});
+  const now = Date.now();
+  const resetTime = now + windowSec * 1000;
+  
+  let failCounter = failureCounters.get(failKey);
+  if (!failCounter || failCounter.resetTime < now) {
+    failCounter = { count: 0, resetTime };
+    failureCounters.set(failKey, failCounter);
+  }
+  
+  failCounter.count++;
 }
 
 // ✅ NEW: Function to reset failure count on success
 export function resetFailureCount(ip: string, userAgent: string = "unknown") {
   const failKey = `${RL_FAIL_PREFIX}:${ip}:${userAgent}`;
-  kv.del(failKey).catch(() => {});
+  failureCounters.delete(failKey);
 } 

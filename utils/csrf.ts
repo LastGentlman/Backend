@@ -1,8 +1,8 @@
 import { Context } from "hono";
-import { VercelKVService } from "../services/VercelKVService.ts";
+import { getSupabaseClient } from "./supabase.ts";
 
-// Vercel KV-backed CSRF token storage
-const kv = VercelKVService.getInstance();
+// Supabase-backed CSRF token storage
+const supabase = getSupabaseClient();
 const CSRF_PREFIX = "csrf";
 const CSRF_TTL_SECONDS = 30 * 60; // 30 minutes
 
@@ -11,11 +11,17 @@ const CSRF_TTL_SECONDS = 30 * 60; // 30 minutes
  */
 export function generateCSRFToken(sessionId: string): string {
   const token = crypto.randomUUID();
-  // Store token in Redis with TTL
-  const key = `${CSRF_PREFIX}:${sessionId}`;
-  console.log(`🔑 Generating CSRF token - Key: ${key}, Token: ${token}`);
-  // Best effort async set, ignore errors to avoid crashing request path
-  kv.setex(key, CSRF_TTL_SECONDS, token).catch((error) => {
+  console.log(`🔑 Generating CSRF token - SessionID: ${sessionId}, Token: ${token}`);
+  
+  // Store token in Supabase with TTL
+  const expiresAt = new Date(Date.now() + CSRF_TTL_SECONDS * 1000);
+  Promise.resolve(supabase.from('csrf_tokens').insert({
+    session_id: sessionId,
+    token: token,
+    expires_at: expiresAt.toISOString()
+  })).then(() => {
+    console.log(`✅ CSRF token stored successfully for session: ${sessionId}`);
+  }).catch((error: unknown) => {
     console.error(`❌ Failed to store CSRF token:`, error);
   });
   
@@ -36,14 +42,22 @@ export function validateCSRFToken(sessionId: string, _token: string): boolean {
 
 export async function validateCSRFTokenAsync(sessionId: string, token: string): Promise<boolean> {
   try {
-    const key = `${CSRF_PREFIX}:${sessionId}`;
-    const stored = await kv.get(key);
-    console.log(`🔍 CSRF Validation - Key: ${key}, Stored: ${stored}, Provided: ${token}`);
-    if (!stored) {
-      console.log(`❌ CSRF token not found for session: ${sessionId}`);
+    const { data, error } = await supabase
+      .from('csrf_tokens')
+      .select('token')
+      .eq('session_id', sessionId)
+      .eq('token', token)
+      .gt('expires_at', new Date().toISOString())
+      .single();
+    
+    console.log(`🔍 CSRF Validation - SessionID: ${sessionId}, Provided: ${token}`);
+    
+    if (error || !data) {
+      console.log(`❌ CSRF token not found or expired for session: ${sessionId}`);
       return false;
     }
-    const isValid = stored === token;
+    
+    const isValid = data.token === token;
     console.log(`🔒 CSRF token validation result: ${isValid}`);
     return isValid;
   } catch (error) {
