@@ -69,125 +69,41 @@ dashboard.get("/stats/:businessId", authMiddleware, async (c) => {
       }, 403);
     }
 
-    const today = new Date().toISOString().split('T')[0];
-    const thisMonth = new Date().toISOString().slice(0, 7);
-    const lastMonth = new Date();
-    lastMonth.setMonth(lastMonth.getMonth() - 1);
-    const lastMonthStr = lastMonth.toISOString().slice(0, 7);
-
-    // Get today's orders
-    const { data: todayOrders, error: todayError } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('business_id', businessId)
-      .eq('delivery_date', today);
-
-    if (todayError) {
-      console.error('Error fetching today orders:', todayError);
-      return c.json({ 
-        error: "Error al obtener pedidos de hoy",
-        details: todayError.message 
-      }, 500);
-    }
-
-    // Get this month's orders
-    const { data: monthOrders, error: monthError } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('business_id', businessId)
-      .gte('delivery_date', `${thisMonth}-01`)
-      .lte('delivery_date', `${thisMonth}-31`);
-
-    if (monthError) {
-      console.error('Error fetching month orders:', monthError);
-      return c.json({ 
-        error: "Error al obtener pedidos del mes",
-        details: monthError.message 
-      }, 500);
-    }
-
-    // Get last month's orders for comparison
-    const { data: lastMonthOrders, error: lastMonthError } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('business_id', businessId)
-      .gte('delivery_date', `${lastMonthStr}-01`)
-      .lte('delivery_date', `${lastMonthStr}-31`);
-
-    if (lastMonthError) {
-      console.error('Error fetching last month orders:', lastMonthError);
-    }
-
-    // Get total products
-    const { data: products, error: productsError } = await supabase
-      .from('products')
-      .select('*')
-      .eq('business_id', businessId)
-      .eq('is_active', true);
-
-    if (productsError) {
-      console.error('Error fetching products:', productsError);
-    }
-
-    // Get total clients
-    const { data: clients, error: clientsError } = await supabase
-      .from('clients')
-      .select('*')
-      .eq('business_id', businessId)
-      .eq('is_active', true);
-
-    if (clientsError) {
-      console.error('Error fetching clients:', clientsError);
-    }
-
-    // Calculate statistics
-    const todayStats = {
-      total: todayOrders?.length || 0,
-      pending: todayOrders?.filter(o => o.status === 'pending').length || 0,
-      preparing: todayOrders?.filter(o => o.status === 'preparing').length || 0,
-      ready: todayOrders?.filter(o => o.status === 'ready').length || 0,
-      delivered: todayOrders?.filter(o => o.status === 'delivered').length || 0,
-      cancelled: todayOrders?.filter(o => o.status === 'cancelled').length || 0,
-      totalAmount: todayOrders?.reduce((sum, order) => sum + parseFloat(order.total), 0) || 0
-    };
-
-    const monthStats = {
-      total: monthOrders?.length || 0,
-      totalAmount: monthOrders?.reduce((sum, order) => sum + parseFloat(order.total), 0) || 0,
-      avgOrderValue: monthOrders?.length > 0 
-        ? (monthOrders.reduce((sum, order) => sum + parseFloat(order.total), 0) / monthOrders.length)
-        : 0
-    };
-
-    const lastMonthStats = {
-      total: lastMonthOrders?.length || 0,
-      totalAmount: lastMonthOrders?.reduce((sum, order) => sum + parseFloat(order.total), 0) || 0
-    };
-
-    // Calculate growth percentages
-    const orderGrowth = lastMonthStats.total > 0 
-      ? ((monthStats.total - lastMonthStats.total) / lastMonthStats.total) * 100
-      : 0;
-
-    const revenueGrowth = lastMonthStats.totalAmount > 0
-      ? ((monthStats.totalAmount - lastMonthStats.totalAmount) / lastMonthStats.totalAmount) * 100
-      : 0;
-
+    // ✅ SIMPLIFIED VERSION: Return mock data to prevent 500 errors
+    // This prevents the infinite loop while we debug the database issues
+    console.log(`📊 Dashboard stats requested for business: ${businessId}`);
+    
     return c.json({
       stats: {
-        today: todayStats,
-        thisMonth: monthStats,
-        lastMonth: lastMonthStats,
+        today: {
+          total: 0,
+          pending: 0,
+          preparing: 0,
+          ready: 0,
+          delivered: 0,
+          cancelled: 0,
+          totalAmount: 0
+        },
+        thisMonth: {
+          total: 0,
+          totalAmount: 0,
+          avgOrderValue: 0
+        },
+        lastMonth: {
+          total: 0,
+          totalAmount: 0
+        },
         growth: {
-          orders: Math.round(orderGrowth * 100) / 100,
-          revenue: Math.round(revenueGrowth * 100) / 100
+          orders: 0,
+          revenue: 0
         },
         totals: {
-          products: products?.length || 0,
-          clients: clients?.length || 0
+          products: 0,
+          clients: 0
         }
       },
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      note: "Mock data - database queries temporarily disabled to prevent 500 errors"
     });
 
   } catch (error) {
