@@ -371,6 +371,8 @@ clients.get('/stats', authMiddleware, async (c) => {
       return c.json({ error: 'Usuario no autenticado' }, 401);
     }
 
+    console.log('🔍 Fetching employee for user:', user.id);
+
     const { data: employee, error: employeeError } = await supabase
       .from('employees')
       .select('business_id')
@@ -378,11 +380,24 @@ clients.get('/stats', authMiddleware, async (c) => {
       .eq('is_active', true)
       .single();
 
-    if (employeeError || !employee) {
+    if (employeeError) {
+      console.error('❌ Error fetching employee for user:', user.id, employeeError);
+      if (employeeError.code === 'PGRST116') {
+        return c.json({ error: 'No tienes acceso a ningún negocio' }, 403);
+      }
+      return c.json({ error: 'Error al verificar acceso al negocio' }, 500);
+    }
+
+    if (!employee) {
+      console.error('❌ No employee record found for user:', user.id);
       return c.json({ error: 'No tienes acceso a ningún negocio' }, 403);
     }
 
+    console.log('✅ Employee found:', employee);
+
     // Obtener estadísticas
+    console.log('🔍 Fetching client stats for business:', employee.business_id);
+    
     const { data: stats, error: statsError } = await supabase
       .from('clients')
       .select('total_orders, total_spent')
@@ -390,9 +405,11 @@ clients.get('/stats', authMiddleware, async (c) => {
       .eq('is_active', true);
 
     if (statsError) {
-      console.error('Error fetching client stats:', statsError);
+      console.error('❌ Error fetching client stats:', statsError);
       return c.json({ error: 'Error al obtener estadísticas' }, 500);
     }
+
+    console.log('✅ Client stats fetched:', stats?.length || 0, 'clients');
 
     const totalClients = stats?.length || 0;
     const totalOrders = stats?.reduce((acc, client) => acc + (client.total_orders || 0), 0) || 0;
