@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { getSupabaseClient } from '../utils/supabase.ts';
 import { authMiddleware } from '../middleware/auth.ts';
 import { validatePhone } from '../utils/validation.ts';
-import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
+import { z } from 'zod';
 
 const clients = new Hono();
 
