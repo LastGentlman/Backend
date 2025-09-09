@@ -886,7 +886,7 @@ business.get("/prices", async (c) => {
     
     return c.json({
       success: true,
-      prices: prices.data.map((price) => ({
+      prices: prices.data.map((price: any) => ({
         id: price.id,
         nickname: price.nickname || undefined,
         unit_amount: price.unit_amount,
@@ -1108,7 +1108,7 @@ business.patch("/settings", requireAdminOrOwner, async (c) => {
     }, 400);
   }
   
-  filteredData.modified_by = user.id;
+  filteredData['modified_by'] = user.id;
   
   const { data, error } = await supabase
     .from('businesses')
@@ -1199,7 +1199,7 @@ business.post("/employees/invite", requireOwner, async (c) => {
   
   // Verificar si el usuario ya existe
   const { data: existingUsers } = await supabase.auth.admin.listUsers();
-  const existingUser = existingUsers.users.find(user => user.email === email);
+  const existingUser = existingUsers.users.find((user: any) => user.email === email);
   
   if (existingUser) {
     // Usuario existe, verificar si ya es empleado
@@ -1714,10 +1714,10 @@ business.get("/invitation-codes", requireAdminOrOwner, async (c) => {
     // Obtener estadísticas
     const stats = {
       total_codes: invitationCodes.length,
-      active_codes: invitationCodes.filter(code => code.status === 'active').length,
-      used_codes: invitationCodes.filter(code => code.status === 'used').length,
-      expired_codes: invitationCodes.filter(code => code.status === 'expired').length,
-      disabled_codes: invitationCodes.filter(code => code.status === 'disabled').length
+      active_codes: invitationCodes.filter((code: any) => code.status === 'active').length,
+      used_codes: invitationCodes.filter((code: any) => code.status === 'used').length,
+      expired_codes: invitationCodes.filter((code: any) => code.status === 'expired').length,
+      disabled_codes: invitationCodes.filter((code: any) => code.status === 'disabled').length
     };
     
     return c.json({ 
@@ -1784,16 +1784,16 @@ business.patch("/invitation-codes/:codeId", requireAdminOrOwner, async (c) => {
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
     
     if (validation.data.status !== undefined) {
-      updateData.status = validation.data.status;
+      updateData['status'] = validation.data.status;
     }
     if (validation.data.max_uses !== undefined) {
-      updateData.max_uses = validation.data.max_uses;
+      updateData['max_uses'] = validation.data.max_uses;
     }
     if (validation.data.expires_in_hours !== undefined) {
-      updateData.expires_at = new Date(Date.now() + validation.data.expires_in_hours * 60 * 60 * 1000).toISOString();
+      updateData['expires_at'] = new Date(Date.now() + validation.data.expires_in_hours * 60 * 60 * 1000).toISOString();
     }
     if (validation.data.notes !== undefined) {
-      updateData.notes = validation.data.notes;
+      updateData['notes'] = validation.data.notes;
     }
 
     const { data: updatedCode, error: updateError } = await supabase
