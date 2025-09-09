@@ -122,6 +122,11 @@ business.post("/activate-trial", async (c) => {
         email: validatedData.businessEmail,
         phone: validatedData.businessPhone || null,
         address: validatedData.businessAddress || null,
+        // ✅ NEW FIELDS - Add the missing fields
+        business_type: validatedData.businessType || null,
+        description: validatedData.businessDescription || null,
+        opening_hours: validatedData.openingHours || null,
+        closing_hours: validatedData.closingHours || null,
         stripe_customer_id: stripeCustomer.id,
         stripe_subscription_id: subscription.id,
         subscription_status: 'trial',
@@ -376,6 +381,11 @@ business.post("/create-with-custom-trial", async (c) => {
         email: validatedData.businessEmail,
         phone: validatedData.businessPhone || null,
         address: validatedData.businessAddress || null,
+        // ✅ NEW FIELDS - Add the missing fields
+        business_type: validatedData.businessType || null,
+        description: validatedData.businessDescription || null,
+        opening_hours: validatedData.openingHours || null,
+        closing_hours: validatedData.closingHours || null,
         owner_id: user.id,
         stripe_customer_id: stripeCustomer.id,
         stripe_subscription_id: subscription.id,
@@ -616,8 +626,8 @@ business.post("/extend-trial-with-payment", async (c) => {
     if (!validation.success) {
       return c.json({ 
         error: "Datos de pago inválidos",
-        issues: validation.errors?.issues.map((issue: { path: (string | number)[]; message: string }) => ({
-          field: issue.path?.join('.'),
+        issues: validation.errors?.issues.map((issue) => ({
+          field: issue.path?.join('.') || '',
           message: issue.message
         }))
       }, 400);
@@ -921,8 +931,8 @@ business.post("/change-plan", async (c) => {
     if (!validation.success) {
       return c.json({ 
         error: "Tipo de plan inválido",
-        issues: validation.errors?.issues.map((issue: { path: (string | number)[]; message: string }) => ({
-          field: issue.path?.join('.'),
+        issues: validation.errors?.issues.map((issue) => ({
+          field: issue.path?.join('.') || '',
           message: issue.message
         }))
       }, 400);

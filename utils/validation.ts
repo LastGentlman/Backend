@@ -5,48 +5,85 @@ import { z } from "zod";
 // Schema para activación de trial
 export const trialActivationSchema = z.object({
   businessName: z.string()
-    .min(2, "El nombre del negocio debe tener al menos 2 caracteres")
-    .max(100, "El nombre del negocio no puede exceder 100 caracteres")
+    .refine((val) => val.length >= 2, {
+      message: "El nombre del negocio debe tener al menos 2 caracteres"
+    })
+    .refine((val) => val.length <= 100, {
+      message: "El nombre del negocio no puede exceder 100 caracteres"
+    })
     .regex(/^[a-zA-Z0-9\s\-_\.]+$/, "El nombre del negocio solo puede contener letras, números, espacios, guiones, guiones bajos y puntos"),
   
   businessEmail: z.string()
-    .email("Email de negocio inválido")
-    .max(255, "El email no puede exceder 255 caracteres"),
+    .email()
+    .refine((val) => val.length <= 255, {
+      message: "El email no puede exceder 255 caracteres"
+    })
+    .toLowerCase(),
   
   businessPhone: z.string()
-    .max(20, "El teléfono no puede exceder 20 caracteres")
+    .refine((val) => val.length <= 20, {
+      message: "El teléfono no puede exceder 20 caracteres"
+    })
     .optional()
     .refine((val: string | undefined) => !val || validatePhone(val), {
       message: "El teléfono debe tener un formato válido para los países soportados"
     }),
   
   businessAddress: z.string()
-    .max(500, "La dirección no puede exceder 500 caracteres")
+    .refine((val) => val.length <= 500, {
+      message: "La dirección no puede exceder 500 caracteres"
+    })
     .optional(),
   
   billingName: z.string()
-    .min(2, "El nombre de facturación debe tener al menos 2 caracteres")
-    .max(100, "El nombre de facturación no puede exceder 100 caracteres"),
+    .refine((val) => val.length >= 2, {
+      message: "El nombre de facturación debe tener al menos 2 caracteres"
+    })
+    .refine((val) => val.length <= 100, {
+      message: "El nombre de facturación no puede exceder 100 caracteres"
+    }),
   
   billingAddress: z.object({
     line1: z.string()
-      .min(1, "La línea 1 de la dirección es requerida")
-      .max(255, "La línea 1 no puede exceder 255 caracteres"),
+      .refine((val) => val.length >= 1, {
+        message: "La línea 1 de la dirección es requerida"
+      })
+      .refine((val) => val.length <= 255, {
+        message: "La línea 1 no puede exceder 255 caracteres"
+      }),
     line2: z.string()
-      .max(255, "La línea 2 no puede exceder 255 caracteres")
+      .refine((val) => val.length <= 255, {
+        message: "La línea 2 no puede exceder 255 caracteres"
+      })
       .optional(),
     city: z.string()
-      .min(1, "La ciudad es requerida")
-      .max(100, "La ciudad no puede exceder 100 caracteres"),
+      .refine((val) => val.length >= 1, {
+        message: "La ciudad es requerida"
+      })
+      .refine((val) => val.length <= 100, {
+        message: "La ciudad no puede exceder 100 caracteres"
+      }),
     state: z.string()
-      .min(1, "El estado es requerido")
-      .max(100, "El estado no puede exceder 100 caracteres"),
+      .refine((val) => val.length >= 1, {
+        message: "El estado es requerido"
+      })
+      .refine((val) => val.length <= 100, {
+        message: "El estado no puede exceder 100 caracteres"
+      }),
     postal_code: z.string()
-      .min(1, "El código postal es requerido")
-      .max(20, "El código postal no puede exceder 20 caracteres"),
+      .refine((val) => val.length >= 1, {
+        message: "El código postal es requerido"
+      })
+      .refine((val) => val.length <= 20, {
+        message: "El código postal no puede exceder 20 caracteres"
+      }),
     country: z.string()
-      .min(1, "El país es requerido")
-      .max(100, "El país no puede exceder 100 caracteres")
+      .refine((val) => val.length >= 1, {
+        message: "El país es requerido"
+      })
+      .refine((val) => val.length <= 100, {
+        message: "El país no puede exceder 100 caracteres"
+      })
   }),
   
   taxId: z.string()
@@ -56,47 +93,84 @@ export const trialActivationSchema = z.object({
     }),
   
   taxRegime: z.enum(["605", "606", "612", "621", "626", "601", "614", "623", "999"], {
-    errorMap: () => ({ message: "Régimen fiscal inválido" })
+    message: "Régimen fiscal inválido"
   }),
   
   currency: z.enum(["MXN", "USD"], {
-    errorMap: () => ({ message: "Moneda inválida. Solo se permiten: MXN, USD" })
+    message: "Moneda inválida. Solo se permiten: MXN, USD"
   }).default("MXN"),
   
   // Trial dinámico (opcional, para casos especiales como consultorías)
   trialDays: z.number()
-    .min(1, "El trial debe ser de al menos 1 día")
-    .max(365, "El trial no puede exceder 365 días")
+    .refine((val) => val >= 1, {
+      message: "El trial debe ser de al menos 1 día"
+    })
+    .refine((val) => val <= 365, {
+      message: "El trial no puede exceder 365 días"
+    })
     .optional(),
   
   paymentMethod: z.object({
     type: z.enum(["card"], {
-      errorMap: () => ({ message: "Tipo de método de pago inválido" })
+      message: "Tipo de método de pago inválido"
     }),
     card: z.object({
       number: z.string()
         .regex(/^\d{13,19}$/, "Número de tarjeta inválido"),
       exp_month: z.number()
-        .min(1, "Mes de expiración inválido")
-        .max(12, "Mes de expiración inválido"),
+        .refine((val) => val >= 1, {
+          message: "Mes de expiración inválido"
+        })
+        .refine((val) => val <= 12, {
+          message: "Mes de expiración inválido"
+        }),
       exp_year: z.number()
-        .min(new Date().getFullYear(), "Año de expiración inválido")
-        .max(new Date().getFullYear() + 20, "Año de expiración inválido"),
+        .refine((val) => val >= new Date().getFullYear(), {
+          message: "Año de expiración inválido"
+        })
+        .refine((val) => val <= new Date().getFullYear() + 20, {
+          message: "Año de expiración inválido"
+        }),
       cvc: z.string()
         .regex(/^\d{3,4}$/, "CVC inválido")
     }).optional()
-  }).optional()
+  }).optional(),
+
+  // ✅ NEW FIELDS - Missing from original schema
+  businessType: z.enum(["restaurant", "retail", "services", "cafe", "bakery", "pharmacy", "other"], {
+    message: "Tipo de negocio inválido"
+  }).optional(),
+  
+  businessDescription: z.string()
+    .refine((val) => val.length <= 1000, {
+      message: "La descripción no puede exceder 1000 caracteres"
+    })
+    .optional(),
+  
+  openingHours: z.string()
+    .refine((val) => val.length <= 10, {
+      message: "Hora de apertura inválida"
+    })
+    .optional(),
+    
+  closingHours: z.string()
+    .refine((val) => val.length <= 10, {
+      message: "Hora de cierre inválida"
+    })
+    .optional()
 });
 
 // Schema para invitación de empleados
 export const employeeInvitationSchema = z.object({
   email: z.string()
-    .email("Email inválido")
-    .max(255, "El email no puede exceder 255 caracteres")
+    .email()
+    .refine((val) => val.length <= 255, {
+      message: "El email no puede exceder 255 caracteres"
+    })
     .toLowerCase(),
   
   role: z.enum(["admin", "seller"], {
-    errorMap: () => ({ message: "Rol inválido. Solo se permiten: admin, seller" })
+    message: "Rol inválido. Solo se permiten: admin, seller"
   })
 });
 
@@ -127,9 +201,9 @@ export const businessSettingsUpdateSchema = z.object({
 
 // Schema para crear código de invitación
 export const createInvitationCodeSchema = z.object({
-  business_id: z.string().uuid("ID de negocio inválido"),
+  business_id: z.string().uuid(),
   role: z.enum(["admin", "seller"], {
-    errorMap: () => ({ message: "Rol inválido. Solo se permiten: admin, seller" })
+    message: "Rol inválido. Solo se permiten: admin, seller"
   }),
   max_uses: z.number()
     .min(1, "El número máximo de usos debe ser al menos 1")
@@ -154,7 +228,7 @@ export const joinBusinessSchema = z.object({
 // Schema para actualizar código de invitación
 export const updateInvitationCodeSchema = z.object({
   status: z.enum(["active", "disabled"], {
-    errorMap: () => ({ message: "Estado inválido. Solo se permiten: active, disabled" })
+    message: "Estado inválido. Solo se permiten: active, disabled"
   }).optional(),
   max_uses: z.number()
     .min(1, "El número máximo de usos debe ser al menos 1")
@@ -171,7 +245,7 @@ export const updateInvitationCodeSchema = z.object({
 
 // Schema para validación de UUID
 export const uuidSchema = z.string()
-  .uuid("ID inválido");
+  .uuid();
 
 // Schema para validación de paginación
 export const paginationSchema = z.object({
