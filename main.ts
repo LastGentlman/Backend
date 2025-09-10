@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
+import { load } from "jsr:@std/dotenv@0.225.5";
 import { validateEnvironmentVariables, getEnvironmentConfig } from "./utils/config.ts";
 import { getSupabaseClient as _getSupabaseClient } from "./utils/supabase.ts";
 import { authMiddleware } from "./middleware/auth.ts";
@@ -19,16 +19,13 @@ import k6Routes from "./routes/k6.ts";
 import monitoringRoutes from "./routes/monitoring.ts";
 import productsRoutes from "./routes/products.ts";
 import clientsRoutes from "./routes/clients.ts";
-import dashboardRoutes from "./routes/dashboard.ts";
 import backupRoutes from "./routes/backup.ts";
 
 // ===== LOAD ENVIRONMENT VARIABLES =====
 // Load .env file if it exists (for local development)
-try {
-  await load({ export: true });
-} catch {
+load({ export: true }).catch(() => {
   // .env file doesn't exist, that's okay
-}
+});
 
 // Add at the top of your main.ts
 export const CONFIG = {
@@ -188,7 +185,6 @@ app.use("/api/orders/*", authMiddleware);
 app.use("/api/business/*", authMiddleware);
 app.use("/api/products/*", authMiddleware);
 app.use("/api/clients/*", authMiddleware);
-app.use("/api/dashboard/*", authMiddleware);
 app.use("/api/test/*", authMiddleware);
 app.use("/api/notifications/*", authMiddleware);
 
@@ -198,7 +194,6 @@ app.use("/api/orders/*", csrfProtection());
 app.use("/api/business/*", csrfProtection());
 app.use("/api/products/*", csrfProtection());
 app.use("/api/clients/*", csrfProtection());
-app.use("/api/dashboard/*", csrfProtection());
 app.use("/api/backup/*", csrfProtection());
 app.use("/api/test/*", csrfProtection());
 app.use("/api/notifications/*", csrfProtection());
@@ -209,7 +204,6 @@ app.route("/api/orders", ordersRoutes);
 app.route("/api/business", businessRoutes);
 app.route("/api/products", productsRoutes);
 app.route("/api/clients", clientsRoutes);
-app.route("/api/dashboard", dashboardRoutes);
 app.route("/api/backup", backupRoutes);
 app.route("/api/notifications", notificationsRoutes);
 
@@ -243,7 +237,7 @@ app.onError((error, c) => {
   // Log detallado del error
   const user = c.get('user') as Record<string, unknown> | undefined;
   const context = c.get('context') as Record<string, unknown> | undefined;
-  const business = context?.business as Record<string, unknown> | undefined;
+  const business = context?.['business'] as Record<string, unknown> | undefined;
   
   const errorLog = {
     message: error instanceof Error ? error.message : 'Unknown error',
@@ -251,8 +245,8 @@ app.onError((error, c) => {
     path: c.req.path,
     method: c.req.method,
     timestamp: new Date().toISOString(),
-    userId: user?.id,
-    businessId: business?.id
+    userId: user?.['id'],
+    businessId: business?.['id']
   };
 
   if (config.logging.detailed) {
@@ -286,7 +280,7 @@ app.onError((error, c) => {
     timestamp: new Date().toISOString(),
     // Solo incluir stack trace en desarrollo
     ...(config.name === 'development' && { stack: error instanceof Error ? error.stack : undefined })
-  }, status);
+  }, status as any);
 });
 
 // ===== CONFIGURACIÓN DEL SERVIDOR =====

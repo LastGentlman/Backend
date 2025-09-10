@@ -3,7 +3,7 @@
     // Target and Module
     "target": "es2022",
     "module": "commonjs",
-    "lib": ["es2022", "dom"],
+    "lib": ["es2022", "dom", "deno.ns", "deno.unstable"],
     "moduleResolution": "node",
     
     // Interop
