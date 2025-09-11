@@ -73,6 +73,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 -- 4. Drop the old triggers and create the correct one
 DROP TRIGGER IF EXISTS update_products_last_modified ON public.products;
 DROP TRIGGER IF EXISTS update_products_updated_at ON public.products;
+DROP TRIGGER IF EXISTS update_products_updated_at_trigger ON public.products;
 
 CREATE TRIGGER update_products_updated_at_trigger
   BEFORE UPDATE ON public.products
@@ -99,25 +100,68 @@ CREATE INDEX IF NOT EXISTS idx_products_sync_status ON public.products USING btr
 WHERE sync_status != 'synced';
 
 -- 8. Add check constraints for data validation
-ALTER TABLE public.products 
-ADD CONSTRAINT products_price_positive_check 
-CHECK (price > 0);
+DO $$
+BEGIN
+    -- Add price positive check constraint
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE constraint_name = 'products_price_positive_check' 
+        AND table_name = 'products' 
+        AND table_schema = 'public'
+    ) THEN
+        ALTER TABLE public.products 
+        ADD CONSTRAINT products_price_positive_check 
+        CHECK (price > 0);
+    END IF;
 
-ALTER TABLE public.products 
-ADD CONSTRAINT products_cost_non_negative_check 
-CHECK (cost IS NULL OR cost >= 0);
+    -- Add cost non-negative check constraint
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE constraint_name = 'products_cost_non_negative_check' 
+        AND table_name = 'products' 
+        AND table_schema = 'public'
+    ) THEN
+        ALTER TABLE public.products 
+        ADD CONSTRAINT products_cost_non_negative_check 
+        CHECK (cost IS NULL OR cost >= 0);
+    END IF;
 
-ALTER TABLE public.products 
-ADD CONSTRAINT products_stock_non_negative_check 
-CHECK (stock >= 0);
+    -- Add stock non-negative check constraint
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE constraint_name = 'products_stock_non_negative_check' 
+        AND table_name = 'products' 
+        AND table_schema = 'public'
+    ) THEN
+        ALTER TABLE public.products 
+        ADD CONSTRAINT products_stock_non_negative_check 
+        CHECK (stock >= 0);
+    END IF;
 
-ALTER TABLE public.products 
-ADD CONSTRAINT products_tax_rate_valid_check 
-CHECK (tax_rate IS NULL OR (tax_rate >= 0 AND tax_rate <= 1));
+    -- Add tax rate valid check constraint
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE constraint_name = 'products_tax_rate_valid_check' 
+        AND table_name = 'products' 
+        AND table_schema = 'public'
+    ) THEN
+        ALTER TABLE public.products 
+        ADD CONSTRAINT products_tax_rate_valid_check 
+        CHECK (tax_rate IS NULL OR (tax_rate >= 0 AND tax_rate <= 1));
+    END IF;
 
-ALTER TABLE public.products 
-ADD CONSTRAINT products_sat_code_format_check 
-CHECK (sat_code IS NULL OR sat_code ~ '^[0-9]{8}$');
+    -- Add SAT code format check constraint
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE constraint_name = 'products_sat_code_format_check' 
+        AND table_name = 'products' 
+        AND table_schema = 'public'
+    ) THEN
+        ALTER TABLE public.products 
+        ADD CONSTRAINT products_sat_code_format_check 
+        CHECK (sat_code IS NULL OR sat_code ~ '^[0-9]{8}$');
+    END IF;
+END $$;
 
 -- 9. Add foreign key constraint for categoryId (if it exists and references business_categories)
 DO $$
@@ -127,12 +171,22 @@ BEGIN
                WHERE table_name = 'business_categories' 
                AND table_schema = 'public') THEN
         
-        -- Add foreign key constraint for categoryId
-        ALTER TABLE public.products 
-        ADD CONSTRAINT products_category_id_fkey 
-        FOREIGN KEY ("categoryId") REFERENCES business_categories(id) ON DELETE SET NULL;
-        
-        RAISE NOTICE 'Added foreign key constraint for categoryId';
+        -- Check if foreign key constraint already exists
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.table_constraints 
+            WHERE constraint_name = 'products_category_id_fkey' 
+            AND table_name = 'products' 
+            AND table_schema = 'public'
+        ) THEN
+            -- Add foreign key constraint for categoryId
+            ALTER TABLE public.products 
+            ADD CONSTRAINT products_category_id_fkey 
+            FOREIGN KEY ("categoryId") REFERENCES business_categories(id) ON DELETE SET NULL;
+            
+            RAISE NOTICE 'Added foreign key constraint for categoryId';
+        ELSE
+            RAISE NOTICE 'Foreign key constraint products_category_id_fkey already exists';
+        END IF;
     ELSE
         RAISE NOTICE 'business_categories table not found - skipping categoryId foreign key';
     END IF;
