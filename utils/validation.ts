@@ -5,10 +5,11 @@ import { z } from "zod";
 // Schema para activación de trial
 export const trialActivationSchema = z.object({
   businessName: z.string()
-    .refine((val) => val.length >= 2, {
+    .regex(/^[a-zA-Z0-9\s\-_\.]+$/, "El nombre del negocio solo puede contener letras, números, espacios, guiones, guiones bajos y puntos")
+    .refine((val: string) => val.length >= 2, {
       message: "El nombre del negocio debe tener al menos 2 caracteres"
     })
-    .refine((val) => val.length <= 100, {
+    .refine((val: string) => val.length <= 100, {
       message: "El nombre del negocio no puede exceder 100 caracteres"
     })
     .refine((val) => /^[a-zA-Z0-9\s\-_\.]+$/.test(val), {
@@ -17,13 +18,13 @@ export const trialActivationSchema = z.object({
   
   businessEmail: z.string()
     .email()
-    .refine((val) => val.length <= 255, {
+    .refine((val: string) => val.length <= 255, {
       message: "El email no puede exceder 255 caracteres"
     })
-    .transform((val) => val.toLowerCase()),
+    .transform((val: string) => val.toLowerCase()),
   
   businessPhone: z.string()
-    .refine((val) => val.length <= 20, {
+    .refine((val: string) => val.length <= 20, {
       message: "El teléfono no puede exceder 20 caracteres"
     })
     .optional()
@@ -32,58 +33,58 @@ export const trialActivationSchema = z.object({
     }),
   
   businessAddress: z.string()
-    .refine((val) => val.length <= 500, {
+    .refine((val: string) => val.length <= 500, {
       message: "La dirección no puede exceder 500 caracteres"
     })
     .optional(),
   
   billingName: z.string()
-    .refine((val) => val.length >= 2, {
+    .refine((val: string) => val.length >= 2, {
       message: "El nombre de facturación debe tener al menos 2 caracteres"
     })
-    .refine((val) => val.length <= 100, {
+    .refine((val: string) => val.length <= 100, {
       message: "El nombre de facturación no puede exceder 100 caracteres"
     }),
   
   billingAddress: z.object({
     line1: z.string()
-      .refine((val) => val.length >= 1, {
+      .refine((val: string) => val.length >= 1, {
         message: "La línea 1 de la dirección es requerida"
       })
-      .refine((val) => val.length <= 255, {
+      .refine((val: string) => val.length <= 255, {
         message: "La línea 1 no puede exceder 255 caracteres"
       }),
     line2: z.string()
-      .refine((val) => val.length <= 255, {
+      .refine((val: string) => val.length <= 255, {
         message: "La línea 2 no puede exceder 255 caracteres"
       })
       .optional(),
     city: z.string()
-      .refine((val) => val.length >= 1, {
+      .refine((val: string) => val.length >= 1, {
         message: "La ciudad es requerida"
       })
-      .refine((val) => val.length <= 100, {
+      .refine((val: string) => val.length <= 100, {
         message: "La ciudad no puede exceder 100 caracteres"
       }),
     state: z.string()
-      .refine((val) => val.length >= 1, {
+      .refine((val: string) => val.length >= 1, {
         message: "El estado es requerido"
       })
-      .refine((val) => val.length <= 100, {
+      .refine((val: string) => val.length <= 100, {
         message: "El estado no puede exceder 100 caracteres"
       }),
     postal_code: z.string()
-      .refine((val) => val.length >= 1, {
+      .refine((val: string) => val.length >= 1, {
         message: "El código postal es requerido"
       })
-      .refine((val) => val.length <= 20, {
+      .refine((val: string) => val.length <= 20, {
         message: "El código postal no puede exceder 20 caracteres"
       }),
     country: z.string()
-      .refine((val) => val.length >= 1, {
+      .refine((val: string) => val.length >= 1, {
         message: "El país es requerido"
       })
-      .refine((val) => val.length <= 100, {
+      .refine((val: string) => val.length <= 100, {
         message: "El país no puede exceder 100 caracteres"
       })
   }),
@@ -104,10 +105,10 @@ export const trialActivationSchema = z.object({
   
   // Trial dinámico (opcional, para casos especiales como consultorías)
   trialDays: z.number()
-    .refine((val) => val >= 1, {
+    .refine((val: number) => val >= 1, {
       message: "El trial debe ser de al menos 1 día"
     })
-    .refine((val) => val <= 365, {
+    .refine((val: number) => val <= 365, {
       message: "El trial no puede exceder 365 días"
     })
     .optional(),
@@ -122,17 +123,17 @@ export const trialActivationSchema = z.object({
           message: "Número de tarjeta inválido"
         }),
       exp_month: z.number()
-        .refine((val) => val >= 1, {
+        .refine((val: number) => val >= 1, {
           message: "Mes de expiración inválido"
         })
-        .refine((val) => val <= 12, {
+        .refine((val: number) => val <= 12, {
           message: "Mes de expiración inválido"
         }),
       exp_year: z.number()
-        .refine((val) => val >= new Date().getFullYear(), {
+        .refine((val: number) => val >= new Date().getFullYear(), {
           message: "Año de expiración inválido"
         })
-        .refine((val) => val <= new Date().getFullYear() + 20, {
+        .refine((val: number) => val <= new Date().getFullYear() + 20, {
           message: "Año de expiración inválido"
         }),
       cvc: z.string()
@@ -148,19 +149,19 @@ export const trialActivationSchema = z.object({
   }).optional(),
   
   businessDescription: z.string()
-    .refine((val) => val.length <= 1000, {
+    .refine((val: string) => val.length <= 1000, {
       message: "La descripción no puede exceder 1000 caracteres"
     })
     .optional(),
   
   openingHours: z.string()
-    .refine((val) => val.length <= 10, {
+    .refine((val: string) => val.length <= 10, {
       message: "Hora de apertura inválida"
     })
     .optional(),
     
   closingHours: z.string()
-    .refine((val) => val.length <= 10, {
+    .refine((val: string) => val.length <= 10, {
       message: "Hora de cierre inválida"
     })
     .optional()
@@ -170,10 +171,10 @@ export const trialActivationSchema = z.object({
 export const employeeInvitationSchema = z.object({
   email: z.string()
     .email()
-    .refine((val) => val.length <= 255, {
+    .refine((val: string) => val.length <= 255, {
       message: "El email no puede exceder 255 caracteres"
     })
-    .transform((val) => val.toLowerCase()),
+    .transform((val: string) => val.toLowerCase()),
   
   role: z.enum(["admin", "seller"], {
     message: "Rol inválido. Solo se permiten: admin, seller"
