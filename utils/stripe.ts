@@ -1,4 +1,4 @@
-import Stripe from "npm:stripe";
+import Stripe from "https://esm.sh/stripe@14.21.0";
 
 // Official Stripe client for Deno
 export class StripeClient {
@@ -11,7 +11,7 @@ export class StripeClient {
     }
     
     this.stripe = new Stripe(secretKey, {
-      apiVersion: '2023-10-16',
+      apiVersion: '2025-08-27.basil',
     });
   }
 
@@ -24,19 +24,19 @@ export class StripeClient {
     });
     
     if (existingCustomers.data.length > 0) {
-      return existingCustomers.data[0];
+      return existingCustomers.data[0]!;
     }
 
     // Crear nuevo cliente
     return await this.stripe.customers.create({
       email,
-      name,
-      metadata
+      ...(name && { name }),
+      ...(metadata && { metadata })
     });
   }
 
   // Crear método de pago
-  async createPaymentMethod(type: string, cardData: Stripe.PaymentMethodCreateParams.Card1): Promise<Stripe.PaymentMethod> {
+  async createPaymentMethod(type: string, cardData: Stripe.PaymentMethodCreateParams.Card): Promise<Stripe.PaymentMethod> {
     return await this.stripe.paymentMethods.create({
       type: type as Stripe.PaymentMethodCreateParams.Type,
       card: cardData,
@@ -84,7 +84,7 @@ export class StripeClient {
     customerId: string, 
     monthlyPriceId: string, 
     trialDays: number = 7
-  ): Promise<{ id: string; trial_end: number | null; status: string; current_period_end: number }> {
+  ): Promise<{ id: string; trial_end: number | null; status: string; current_period_end: number | null }> {
     // Para trial gratuito, usar el precio mensual recurrente pero con trial
     // Esto evita el error de "one_time" price type que no es compatible con trials
     const subscriptionData: Stripe.SubscriptionCreateParams = {
@@ -101,7 +101,7 @@ export class StripeClient {
       id: subscription.id,
       trial_end: subscription.trial_end!,
       status: subscription.status,
-      current_period_end: subscription.current_period_end
+      current_period_end: (subscription as any).current_period_end!
     };
   }
 
@@ -123,7 +123,7 @@ export class StripeClient {
         throw new Error(`No se encontró un precio activo con lookup key: ${lookupKey}`);
       }
 
-      return prices.data[0].id;
+      return prices.data[0]!.id;
     } catch (error) {
       console.error(`Error obteniendo precio por lookup key ${lookupKey}:`, error);
       throw new Error(`Error obteniendo precio: ${error instanceof Error ? error.message : 'Error desconocido'}`);
@@ -169,7 +169,7 @@ export class StripeClient {
     // Actualizar el precio de la suscripción
     return await this.stripe.subscriptions.update(subscriptionId, {
       items: [{
-        id: subscription.items.data[0].id,
+        id: subscription.items.data[0]!.id,
         price: newPriceId,
       }],
       proration_behavior: 'create_prorations'

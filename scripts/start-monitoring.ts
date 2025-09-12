@@ -5,7 +5,7 @@
  * Ejecutar con: deno run --allow-all scripts/start-monitoring.ts
  */
 
-import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
+import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
 import { getSupabaseClient } from "../utils/supabase.ts";
 import { EnhancedDatabaseMonitor } from "../services/EnhancedDatabaseMonitor.ts";
 import { WhatsAppAlertsService } from "../services/WhatsAppAlertsService.ts";

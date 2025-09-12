@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.1/assert/mod.ts";
+import { assertEquals, assertExists } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { ConflictResolver } from "./conflictResolution.ts";
 
 Deno.test("ConflictResolver - Local wins when local timestamp is newer", async () => {

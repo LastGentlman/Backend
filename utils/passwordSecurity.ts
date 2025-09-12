@@ -82,11 +82,19 @@ export function validatePassword(password: string): {
   const result = strongPasswordSchema.safeParse(password);
   const strength = calculatePasswordStrength(password);
   
-  return {
-    isValid: result.success && strength.isAcceptable,
-    errors: result.success ? [] : result.error.issues.map(issue => issue.message),
-    strength
-  };
+  if (result.success) {
+    return {
+      isValid: strength.isAcceptable,
+      errors: [],
+      strength
+    };
+  } else {
+    return {
+      isValid: false,
+      errors: result.error.issues.map(issue => issue.message),
+      strength
+    };
+  }
 }
 
 // Función para comparar contraseñas de forma segura contra timing attacks

@@ -1,12 +1,25 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { load } from "jsr:@std/dotenv@0.225.5";
+import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
+
+// Import types first
+import { 
+  AppConfig, 
+  UserContext, 
+  BusinessContext, 
+  HealthResponse,
+  ErrorResponse,
+  ErrorCode,
+  isAppError
+} from "./types/app.ts";
+
+// Then import utilities
 import { validateEnvironmentVariables, getEnvironmentConfig } from "./utils/config.ts";
-import { getSupabaseClient as _getSupabaseClient } from "./utils/supabase.ts";
+import { getSupabaseClient } from "./utils/supabase.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 import { csrfProtection } from "./utils/csrf.ts";
 import { securityHeadersMiddleware } from "./utils/security.ts";
-// Vercel KV removed - using Supabase for CSRF tokens
+import { createValidatedConfig } from "./utils/env-validation.ts";
 
 // Importar rutas
 import testRoutes from "./routes/test.ts";
@@ -21,47 +34,39 @@ import productsRoutes from "./routes/products.ts";
 import clientsRoutes from "./routes/clients.ts";
 import backupRoutes from "./routes/backup.ts";
 
-// ===== LOAD ENVIRONMENT VARIABLES =====
-// Load .env file if it exists (for local development)
-load({ export: true }).catch(() => {
-  // .env file doesn't exist, that's okay
-});
-
-// Add at the top of your main.ts
-export const CONFIG = {
-  SUPABASE_URL: Deno.env.get("SUPABASE_URL"),
-  SUPABASE_ANON_KEY: Deno.env.get("SUPABASE_ANON_KEY"),
-  SUPABASE_SERVICE_ROLE_KEY: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
-  IS_PRODUCTION: Deno.env.get("DENO_DEPLOYMENT_ID") !== undefined,
-  PORT: parseInt(Deno.env.get("PORT") || "8000"),
-};
-
-// Validate production environment
-if (CONFIG.IS_PRODUCTION) {
-  const required = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
-  const missing = required.filter(key => !CONFIG[key as keyof typeof CONFIG]);
-  
-  if (missing.length > 0) {
-    throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+// ===== CARGA DE VARIABLES DE ENTORNO =====
+// ✅ MEJOR PRÁCTICA: Manejo de errores más específico
+try {
+  await load({ export: true });
+  console.log("✅ Environment file loaded");
+} catch (error) {
+  // Solo log en desarrollo, no error crítico
+  if (Deno.env.get("NODE_ENV") === "development") {
+    console.log("ℹ️ No .env file found (normal in production)");
   }
 }
 
-console.log("✅ Environment variables loaded");
+// ✅ MEJOR PRÁCTICA: Configuración con validación centralizada
+export const CONFIG: AppConfig = createValidatedConfig();
+
+console.log("✅ Environment variables validated");
 
 // ===== VALIDACIÓN INICIAL =====
-// Only validate environment variables in development (not in deployment)
+// ✅ MEJOR PRÁCTICA: Solo validar en desarrollo
 if (!CONFIG.IS_PRODUCTION) {
-  validateEnvironmentVariables();
+  try {
+    validateEnvironmentVariables();
+    console.log("✅ Development environment validated");
+  } catch (error) {
+    console.error("❌ Environment validation failed:", error);
+    // En desarrollo, podemos continuar con advertencias
+  }
 }
 
 const config = getEnvironmentConfig();
 
-// ===== SUPABASE CLIENT (Lazy Loading) =====
-// Supabase client will be initialized on first use
+// ===== INICIALIZACIÓN LAZY DE SUPABASE =====
 console.log("✅ Supabase client ready (lazy loading)");
-
-// ===== CSRF TOKENS =====
-// CSRF tokens now stored in Supabase (no separate service needed)
 console.log("✅ CSRF tokens will be stored in Supabase");
 
 // ===== INICIALIZACIÓN DE LA APP =====
@@ -79,45 +84,44 @@ const app = new Hono();
 if (config.name !== 'production') {
   app.use("*", async (c, next) => {
     await next();
-    // Solo para respuestas exitosas y JSON
-    if (
-      c.res &&
-      c.res.headers.get("content-type")?.includes("application/json") &&
-      c.res.status < 400
-    ) {
+    
+    const contentType = c.res.headers.get("content-type");
+    const isJson = contentType?.includes("application/json") ?? false;
+    const isSuccess = c.res.status < 400;
+    
+    if (c.res && isJson && isSuccess) {
       try {
         const body = await c.res.json();
         c.res = new Response(JSON.stringify(body, null, 2), {
           headers: c.res.headers,
           status: c.res.status,
         });
-      } catch {
-        // Ignorar si no es JSON parseable
+      } catch (parseError) {
+        console.warn("Failed to parse JSON for pretty printing:", parseError);
       }
     }
   });
   console.log(`${isDev ? '📝' : 'JSON:'} Pretty JSON enabled for development`);
 } else {
-  console.log(`${isDev ? '📝' : 'JSON:'} Pretty JSON disabled for production (optimized responses)`);
+  console.log(`${isDev ? '📝' : 'JSON:'} Pretty JSON disabled for production`);
 }
 
-// 2. CORS configurado correctamente por ambiente
+// 2. CORS configurado por ambiente
 app.use("*", cors({
-  origin: config.cors.origins, // ✅ FIJO: Orígenes específicos por ambiente
+  origin: config.cors.origins,
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization', 'X-Session-ID', 'X-CSRF-Token'],
   exposeHeaders: ['Content-Length', 'X-CSRF-Token'],
-  maxAge: 600, // Cache preflight por 10 minutos
+  maxAge: 600,
 }));
 
-// 3. Logging middleware personalizado
+// 3. Logging middleware con tipos específicos
 app.use("*", async (c, next) => {
   const start = Date.now();
   const method = c.req.method;
   const path = c.req.path;
   
-  // Solo loggear en desarrollo y staging
   if (config.logging.detailed) {
     const emoji = isDev ? '➡️' : '';
     console.log(`${emoji} ${method} ${path}`);
@@ -128,7 +132,6 @@ app.use("*", async (c, next) => {
   const duration = Date.now() - start;
   const status = c.res.status;
   
-  // Color coding para status
   const statusEmoji = isDev ? (status >= 400 ? '🔴' : status >= 300 ? '🟡' : '🟢') : '';
   const statusText = status >= 400 ? 'ERROR' : status >= 300 ? 'REDIRECT' : 'SUCCESS';
   
@@ -145,16 +148,15 @@ app.use("*", securityHeadersMiddleware(CONFIG.IS_PRODUCTION));
 
 // 5. Middleware CSRF se aplicará después de autenticación
 
-// ===== HEALTH CHECK (antes de rutas protegidas) =====
+// ===== HEALTH CHECK =====
 app.get("/health", async (c) => {
   try {
-    const { getSupabaseClient } = await import("./utils/supabase.ts");
     const supabase = getSupabaseClient();
     
-    // Test básico de conectividad
+    // Test básico de conectividad con manejo de errores
     const { error } = await supabase.from('profiles').select('count').limit(1);
     
-    return c.json({
+    const healthData: HealthResponse = {
       status: "healthy",
       database: error ? "error" : "connected",
       timestamp: new Date().toISOString(),
@@ -162,43 +164,54 @@ app.get("/health", async (c) => {
       rateLimiting: config.rateLimiting.enabled ? "enabled" : "disabled",
       security: config.security.strictCORS ? "strict" : "permissive",
       version: "1.0.0"
-    });
+    };
+
+    return c.json(healthData);
   } catch (error) {
     console.error("❌ Health check failed:", error);
-    return c.json({
+    
+    const errorData: HealthResponse = {
       status: "error",
-      error: error instanceof Error ? error.message : "Unknown error",
-      timestamp: new Date().toISOString()
-    }, 500);
+      database: "error",
+      timestamp: new Date().toISOString(),
+      environment: config.name,
+      rateLimiting: config.rateLimiting.enabled ? "enabled" : "disabled",
+      security: config.security.strictCORS ? "strict" : "permissive",
+      version: "1.0.0"
+    };
+    
+    return c.json(errorData, 500);
   }
 });
 
-// ===== RUTAS PÚBLICAS (sin autenticación) =====
+// ===== RUTAS PÚBLICAS =====
 app.route("/api/auth", authRoutes);
 app.route("/api/whatsapp", whatsappRoutes);
 app.route("/api/k6", k6Routes);
 app.route("/api/monitoring", monitoringRoutes);
 
-// ===== MIDDLEWARE DE AUTENTICACIÓN =====
-// ✅ FIJO: Aplicar middleware ANTES de registrar rutas protegidas
-app.use("/api/orders/*", authMiddleware);
-app.use("/api/business/*", authMiddleware);
-app.use("/api/products/*", authMiddleware);
-app.use("/api/clients/*", authMiddleware);
-app.use("/api/test/*", authMiddleware);
-app.use("/api/notifications/*", authMiddleware);
+// ===== MIDDLEWARE DE AUTENTICACIÓN PARA RUTAS PROTEGIDAS =====
+const protectedRoutes = [
+  "/api/orders/*",
+  "/api/business/*",
+  "/api/products/*",
+  "/api/clients/*",
+  "/api/test/*",
+  "/api/notifications/*",
+  "/api/backup/*"
+] as const;
 
-// ===== MIDDLEWARE CSRF PARA RUTAS PROTEGIDAS =====
-// Aplicar CSRF después de autenticación para rutas que modifican datos
-app.use("/api/orders/*", csrfProtection());
-app.use("/api/business/*", csrfProtection());
-app.use("/api/products/*", csrfProtection());
-app.use("/api/clients/*", csrfProtection());
-app.use("/api/backup/*", csrfProtection());
-app.use("/api/test/*", csrfProtection());
-app.use("/api/notifications/*", csrfProtection());
+// Aplicar autenticación
+protectedRoutes.forEach(route => {
+  app.use(route, authMiddleware);
+});
 
-// ===== RUTAS PROTEGIDAS (requieren autenticación) =====
+// Aplicar CSRF a rutas que modifican datos
+protectedRoutes.forEach(route => {
+  app.use(route, csrfProtection());
+});
+
+// ===== RUTAS PROTEGIDAS =====
 app.route("/api/test", testRoutes);
 app.route("/api/orders", ordersRoutes);
 app.route("/api/business", businessRoutes);
@@ -209,9 +222,12 @@ app.route("/api/notifications", notificationsRoutes);
 
 // ===== MANEJO DE RUTAS NO ENCONTRADAS =====
 app.notFound((c) => {
-  const logMessage = isDev ? `❌ 404: ${c.req.method} ${c.req.path}` : `404: ${c.req.method} ${c.req.path}`;
+  const logMessage = isDev 
+    ? `❌ 404: ${c.req.method} ${c.req.path}` 
+    : `404: ${c.req.method} ${c.req.path}`;
   console.log(logMessage);
-  return c.json({ 
+  
+  const notFoundData = {
     error: "Endpoint no encontrado",
     path: c.req.path,
     method: c.req.method,
@@ -225,19 +241,20 @@ app.notFound((c) => {
       "GET /api/business",
       "POST /api/notifications/subscribe"
     ]
-  }, 404);
+  };
+  
+  return c.json(notFoundData, 404);
 });
 
-// ===== ERROR HANDLER GLOBAL (debe ir AL FINAL) =====
-// ✅ FIJO: Mover error handler al final para capturar todos los errores
-app.onError((error, c) => {
+// ===== ERROR HANDLER GLOBAL =====
+app.onError((error: unknown, c) => {
   const errorPrefix = isDev ? '🚨' : 'ERROR:';
   console.error(`${errorPrefix} Unhandled error:`, error);
   
-  // Log detallado del error
-  const user = c.get('user') as Record<string, unknown> | undefined;
-  const context = c.get('context') as Record<string, unknown> | undefined;
-  const business = context?.['business'] as Record<string, unknown> | undefined;
+  // Extraer contexto con tipos seguros
+  const user = c.get('user') as unknown as UserContext | undefined;
+  const context = c.get('context') as unknown as { business?: BusinessContext } | undefined;
+  const business = context?.business;
   
   const errorLog = {
     message: error instanceof Error ? error.message : 'Unknown error',
@@ -245,8 +262,8 @@ app.onError((error, c) => {
     path: c.req.path,
     method: c.req.method,
     timestamp: new Date().toISOString(),
-    userId: user?.['id'],
-    businessId: business?.['id']
+    userId: user?.id,
+    businessId: business?.id
   };
 
   if (config.logging.detailed) {
@@ -254,33 +271,31 @@ app.onError((error, c) => {
     console.error(`${detailPrefix} Error details:`, JSON.stringify(errorLog, null, 2));
   }
 
-  // Determinar status y mensaje del error
+  // Determinar status y mensaje con tipos específicos
   let status = 500;
   let message = "Error interno del servidor";
-  let code = 'INTERNAL_SERVER_ERROR';
+  let code: ErrorCode = 'INTERNAL_SERVER_ERROR';
 
-  type AppError = { status?: number; message?: string; code?: string };
-  const appError = error as AppError;
-  
-  if (appError.status && typeof appError.status === 'number') {
-    status = appError.status;
+  if (isAppError(error)) {
+    status = error.status;
+    message = error.message;
+    code = error.code;
+  } else if (error instanceof Error) {
+    // Mantener mensaje del error pero status 500
+    message = error.message;
   }
   
-  if (appError.message && typeof appError.message === 'string') {
-    message = appError.message;
-  }
-  
-  if (appError.code && typeof appError.code === 'string') {
-    code = appError.code;
-  }
-  
-  return c.json({
+  const errorResponse: ErrorResponse = {
     error: message,
     code,
     timestamp: new Date().toISOString(),
     // Solo incluir stack trace en desarrollo
-    ...(config.name === 'development' && { stack: error instanceof Error ? error.stack : undefined })
-  }, status as any);
+    ...(config.name === 'development' && error instanceof Error && error.stack && { 
+      stack: error.stack
+    })
+  };
+  
+  return c.json(errorResponse, status as 200 | 400 | 401 | 403 | 404 | 500);
 });
 
 // ===== CONFIGURACIÓN DEL SERVIDOR =====

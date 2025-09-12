@@ -1,4 +1,4 @@
-import { assertEquals, assert } from "https://deno.land/std@0.220.1/assert/mod.ts";
+import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
 
 // Helper functions for assertions
 const assertTrue = (condition: boolean, message?: string) => assert(condition, message);

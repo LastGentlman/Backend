@@ -89,7 +89,7 @@ business.post("/activate-trial", async (c) => {
     }
 
     // 3. Crear trial gratuito (7 días base + 7 días adicionales si agrega método de pago)
-    let subscription: { id: string; trial_end: number | null; status: string; current_period_end: number };
+        let subscription: { id: string; trial_end: number | null; status: string; current_period_end: number | null };
     const baseTrialDays = 7; // 7 días base sin método de pago
     const extendedTrialDays = paymentMethodId ? 14 : 7; // 7 días adicionales si agrega método de pago
     
@@ -224,7 +224,7 @@ business.post("/activate-trial", async (c) => {
         id: subscription.id,
         status: subscription.status,
         trialEnd: subscription.trial_end!,
-        currentPeriodEnd: subscription.current_period_end
+        currentPeriodEnd: subscription.current_period_end || null
       }
     };
 
@@ -351,7 +351,7 @@ business.post("/create-with-custom-trial", async (c) => {
     }
 
     // 3. Crear trial personalizado
-    let subscription: { id: string; trial_end: number | null; status: string; current_period_end: number };
+        let subscription: { id: string; trial_end: number | null; status: string; current_period_end: number | null };
     
     if (paymentMethodId) {
       // Si hay método de pago, crear suscripción mensual con trial personalizado
@@ -475,7 +475,7 @@ business.post("/create-with-custom-trial", async (c) => {
         id: subscription.id,
         status: subscription.status,
         trialEnd: subscription.trial_end!,
-        currentPeriodEnd: subscription.current_period_end
+        currentPeriodEnd: subscription.current_period_end || null
       }
     };
 
@@ -577,7 +577,7 @@ business.post("/extend-trial", async (c) => {
         id: updatedSubscription.id,
         status: updatedSubscription.status,
         trialEnd: updatedSubscription.trial_end,
-        currentPeriodEnd: updatedSubscription.current_period_end
+        currentPeriodEnd: (updatedSubscription as any).current_period_end || null
       }
     });
 
@@ -846,7 +846,7 @@ business.post("/admin/extend-trial/:businessId", async (c) => {
         id: updatedSubscription.id,
         status: updatedSubscription.status,
         trialEnd: updatedSubscription.trial_end,
-        currentPeriodEnd: updatedSubscription.current_period_end
+        currentPeriodEnd: (updatedSubscription as any).current_period_end || null
       }
     });
 
@@ -1018,7 +1018,7 @@ business.post("/change-plan", async (c) => {
       subscription: {
         id: updatedSubscription.id,
         status: updatedSubscription.status,
-        current_period_end: updatedSubscription.current_period_end
+        current_period_end: (updatedSubscription as any).current_period_end || null
       }
     });
 

@@ -11,14 +11,16 @@ export const trialActivationSchema = z.object({
     .refine((val) => val.length <= 100, {
       message: "El nombre del negocio no puede exceder 100 caracteres"
     })
-    .regex(/^[a-zA-Z0-9\s\-_\.]+$/, "El nombre del negocio solo puede contener letras, números, espacios, guiones, guiones bajos y puntos"),
+    .refine((val) => /^[a-zA-Z0-9\s\-_\.]+$/.test(val), {
+      message: "El nombre del negocio solo puede contener letras, números, espacios, guiones, guiones bajos y puntos"
+    }),
   
   businessEmail: z.string()
     .email()
     .refine((val) => val.length <= 255, {
       message: "El email no puede exceder 255 caracteres"
     })
-    .toLowerCase(),
+    .transform((val) => val.toLowerCase()),
   
   businessPhone: z.string()
     .refine((val) => val.length <= 20, {
@@ -116,7 +118,9 @@ export const trialActivationSchema = z.object({
     }),
     card: z.object({
       number: z.string()
-        .regex(/^\d{13,19}$/, "Número de tarjeta inválido"),
+        .refine((val) => /^\d{13,19}$/.test(val), {
+          message: "Número de tarjeta inválido"
+        }),
       exp_month: z.number()
         .refine((val) => val >= 1, {
           message: "Mes de expiración inválido"
@@ -132,7 +136,9 @@ export const trialActivationSchema = z.object({
           message: "Año de expiración inválido"
         }),
       cvc: z.string()
-        .regex(/^\d{3,4}$/, "CVC inválido")
+        .refine((val) => /^\d{3,4}$/.test(val), {
+          message: "CVC inválido"
+        })
     }).optional()
   }).optional(),
 
@@ -167,7 +173,7 @@ export const employeeInvitationSchema = z.object({
     .refine((val) => val.length <= 255, {
       message: "El email no puede exceder 255 caracteres"
     })
-    .toLowerCase(),
+    .transform((val) => val.toLowerCase()),
   
   role: z.enum(["admin", "seller"], {
     message: "Rol inválido. Solo se permiten: admin, seller"
@@ -179,7 +185,9 @@ export const businessSettingsUpdateSchema = z.object({
   name: z.string()
     .min(2, "El nombre del negocio debe tener al menos 2 caracteres")
     .max(100, "El nombre del negocio no puede exceder 100 caracteres")
-    .regex(/^[a-zA-Z0-9\s\-_\.]+$/, "El nombre del negocio solo puede contener letras, números, espacios, guiones, guiones bajos y puntos")
+    .refine((val) => /^[a-zA-Z0-9\s\-_\.]+$/.test(val), {
+      message: "El nombre del negocio solo puede contener letras, números, espacios, guiones, guiones bajos y puntos"
+    })
     .optional(),
   
   settings: z.object({
@@ -222,7 +230,9 @@ export const createInvitationCodeSchema = z.object({
 export const joinBusinessSchema = z.object({
   businessCode: z.string()
     .length(11, "El código debe tener exactamente 11 caracteres")
-    .regex(/^[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$/, "El código debe tener el formato XXX-XXX-XXX")
+    .refine((val) => /^[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$/.test(val), {
+      message: "El código debe tener el formato XXX-XXX-XXX"
+    })
 });
 
 // Schema para actualizar código de invitación
@@ -794,4 +804,4 @@ export function validateMexicanRFC(rfc: string): boolean {
 
 export type TrialActivationRequest = z.infer<typeof trialActivationSchema>;
 export type EmployeeInvitationRequest = z.infer<typeof employeeInvitationSchema>;
-export type BusinessSettingsUpdateRequest = z.infer<typeof businessSettingsUpdateSchema>; 
+export type BusinessSettingsUpdateRequest = z.infer<typeof businessSettingsUpdateSchema>;

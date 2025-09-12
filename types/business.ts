@@ -54,7 +54,7 @@ export interface TrialActivationResponse {
     id: string;
     status: string;
     trialEnd: number;
-    currentPeriodEnd: number;
+    currentPeriodEnd: number | null;
   };
 }
 

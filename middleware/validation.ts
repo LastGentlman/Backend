@@ -111,4 +111,4 @@ export function getValidatedQuery<T>(c: Context): T {
  */
 export function getValidatedParams<T>(c: Context): T {
   return c.get('validatedParams');
-} 
+}

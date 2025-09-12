@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-net --allow-env --allow-read
 
-import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
+import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
 import { WhatsAppAlertsService } from "../services/WhatsAppAlertsService.ts";
 import { AlertRulesService } from "../services/AlertRulesService.ts";
 

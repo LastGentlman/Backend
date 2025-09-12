@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-all
 
-import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
+import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
 import { getSupabaseClient } from "./utils/supabase.ts";
 
 // Colors for console output

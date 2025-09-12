@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.1/assert/mod.ts";
-import { load } from "https://deno.land/std@0.220.1/dotenv/mod.ts";
+import { assertEquals, assertExists } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
 
 // Load environment variables for testing
 const env = await load();
