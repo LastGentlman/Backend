@@ -18,7 +18,7 @@ export const trialActivationSchema = z.object({
     .refine((val: string) => val.length <= 255, {
       message: "El email no puede exceder 255 caracteres"
     })
-    .toLowerCase(),
+    .transform((val: string) => val.toLowerCase()),
   
   businessPhone: z.string()
     .refine((val: string) => val.length <= 20, {
@@ -167,7 +167,7 @@ export const employeeInvitationSchema = z.object({
     .refine((val: string) => val.length <= 255, {
       message: "El email no puede exceder 255 caracteres"
     })
-    .toLowerCase(),
+    .transform((val: string) => val.toLowerCase()),
   
   role: z.enum(["admin", "seller"], {
     message: "Rol inválido. Solo se permiten: admin, seller"
