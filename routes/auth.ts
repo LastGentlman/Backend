@@ -86,9 +86,15 @@ auth.post("/register", validateRequest(registerSchema), async (c) => {
     ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
   });
 
+  // Verificar si el usuario necesita confirmación de email
+  const needsEmailConfirmation = !authData.user.email_confirmed_at;
+  
   return c.json({
-    message: "User registered successfully. Please check your email to verify your account.",
-    user: authData.user
+    message: needsEmailConfirmation 
+      ? "User registered successfully. Please check your email to verify your account."
+      : "User registered successfully. You can now login.",
+    user: authData.user,
+    emailConfirmationRequired: needsEmailConfirmation
   }, 201);
 });
 
