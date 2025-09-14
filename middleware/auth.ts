@@ -108,9 +108,14 @@ export const authMiddleware = async (c: Context, next: () => Promise<void | Resp
       });
 
       return c.json({ 
-        error: 'Demasiados intentos de autenticación',
+        error: 'Demasiados intentos de autenticación. Has excedido el límite de 10 intentos por 5 minutos.',
         code: 'AUTH_RATE_LIMIT_EXCEEDED',
-        message: 'Tu cuenta ha sido suspendida temporalmente por seguridad'
+        message: 'Tu cuenta ha sido suspendida temporalmente por seguridad',
+        details: {
+          maxAttempts: 10,
+          timeWindow: "5 minutos",
+          retryAfter: 300
+        }
       }, 429);
     }
 

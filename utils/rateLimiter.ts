@@ -40,9 +40,14 @@ export function createRateLimiter(config: RateLimitConfig) {
     
     if (count > config.maxRequests) {
       return c.json({
-        error: "Too many requests",
+        error: `Demasiados intentos. Has excedido el límite de ${config.maxRequests} intentos por ${Math.ceil(config.windowMs / 60000)} minuto(s).`,
         code: "RATE_LIMIT_EXCEEDED",
-        retryAfter
+        retryAfter,
+        details: {
+          maxAttempts: config.maxRequests,
+          timeWindow: `${Math.ceil(config.windowMs / 60000)} minuto(s)`,
+          retryAfterSeconds: retryAfter
+        }
       }, 429, {
         "X-RateLimit-Limit": String(config.maxRequests),
         "X-RateLimit-Remaining": "0",
@@ -120,9 +125,14 @@ export function createEnhancedRateLimiter(config: RateLimitConfig) {
 
     if (count > config.maxRequests) {
       return c.json({
-        error: "Rate limit exceeded",
+        error: `Demasiados intentos. Has excedido el límite de ${config.maxRequests} intentos por ${Math.ceil(config.windowMs / 60000)} minuto(s).`,
         code: "ENHANCED_RATE_LIMIT_EXCEEDED",
-        retryAfter
+        retryAfter,
+        details: {
+          maxAttempts: config.maxRequests,
+          timeWindow: `${Math.ceil(config.windowMs / 60000)} minuto(s)`,
+          retryAfterSeconds: retryAfter
+        }
       }, 429, {
         "X-RateLimit-Limit": String(config.maxRequests),
         "X-RateLimit-Remaining": "0",

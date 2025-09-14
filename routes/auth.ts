@@ -116,6 +116,18 @@ auth.post("/login", conditionalAuthRateLimiter(), validateRequest(loginSchema), 
         code: "INVALID_CREDENTIALS"
       }, 401);
     }
+    // Rate limiting errors
+    if (error.message.includes("Too many requests") || error.message.includes("Rate limit")) {
+      return c.json({
+        error: "Demasiados intentos de inicio de sesión. Has excedido el límite de 5 intentos por minuto.",
+        code: "RATE_LIMIT_EXCEEDED",
+        details: {
+          maxAttempts: 5,
+          timeWindow: "1 minuto",
+          retryAfter: 60
+        }
+      }, 429);
+    }
     // Otros errores
     return c.json({
       error: error.message,
