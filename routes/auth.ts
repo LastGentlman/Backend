@@ -935,33 +935,101 @@ auth.delete("/account", authMiddleware, async (c) => {
       // Continue with account deletion even if avatar deletion fails
     }
 
-    // 🗑️ STEP 2: Soft delete employee record (if exists)
-    if (employee) {
-      const { error: employeeError } = await supabase
-        .from('employees')
-        .update({ is_active: false })
+    // 🗑️ STEP 2: Delete dependent rows in correct order (to avoid FK violations)
+    console.log('🗑️ Starting cascade deletion for user:', user.id);
+    
+    try {
+      // 1) Remove business invitation usage
+      await supabase
+        .from('business_invitation_usage')
+        .delete()
+        .eq('used_by', user.id);
+
+      // 2) Remove business invitation codes created by this user
+      await supabase
+        .from('business_invitation_codes')
+        .delete()
+        .eq('created_by', user.id);
+
+      // 3) Remove push subscriptions
+      await supabase
+        .from('push_subscriptions')
+        .delete()
         .eq('user_id', user.id);
 
-      if (employeeError) {
-        console.error('Error soft deleting employee:', employeeError);
-        return c.json({ 
-          error: "Error al eliminar datos del empleado",
-          code: "EMPLOYEE_DELETE_ERROR"
-        }, 500);
-      }
+      // 4) Remove notification logs
+      await supabase
+        .from('notification_logs')
+        .delete()
+        .eq('user_id', user.id);
+
+      // 5) Remove error logs
+      await supabase
+        .from('error_logs')
+        .delete()
+        .eq('user_id', user.id);
+
+      // 6) Remove backup metadata
+      await supabase
+        .from('backup_metadata')
+        .delete()
+        .eq('user_id', user.id);
+
+      // 7) Remove Indexes entries
+      await supabase
+        .from('Indexes')
+        .delete()
+        .eq('user_id', user.id);
+
+      // 8) Remove conflict resolutions
+      await supabase
+        .from('conflict_resolutions')
+        .delete()
+        .eq('resolved_by', user.id);
+
+      // 9) Remove employees rows
+      await supabase
+        .from('employees')
+        .delete()
+        .eq('user_id', user.id);
+
+      // 10) Update orders to null modified_by
+      await supabase
+        .from('orders')
+        .update({ modified_by: null })
+        .eq('modified_by', user.id);
+
+      // 11) Update businesses to null owner_id (if user is owner)
+      await supabase
+        .from('businesses')
+        .update({ owner_id: null })
+        .eq('owner_id', user.id);
+
+      // 12) Clear current_business_id from profile
+      await supabase
+        .from('profiles')
+        .update({ current_business_id: null })
+        .eq('id', user.id);
+
+      console.log('✅ All dependent rows deleted/updated successfully');
+
+    } catch (cascadeError) {
+      console.error('Error during cascade deletion:', cascadeError);
+      return c.json({ 
+        error: "Error al eliminar datos relacionados",
+        code: "CASCADE_DELETE_ERROR",
+        details: cascadeError instanceof Error ? cascadeError.message : "Error desconocido"
+      }, 500);
     }
 
-    // 🗑️ STEP 3: Soft delete profile data
+    // 🗑️ STEP 3: Delete profile data (now safe to delete)
     const { error: profileError } = await supabase
       .from('profiles')
-      .update({ 
-        is_active: false,
-        deleted_at: new Date().toISOString()
-      })
+      .delete()
       .eq('id', user.id);
 
     if (profileError) {
-      console.error('Error soft deleting profile:', profileError);
+      console.error('Error deleting profile:', profileError);
       return c.json({ 
         error: "Error al eliminar perfil",
         code: "PROFILE_DELETE_ERROR"
