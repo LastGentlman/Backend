@@ -9,14 +9,21 @@ SECURITY DEFINER
 AS $$
 BEGIN
   -- Mark user as deleted in auth.users metadata (soft delete)
-  UPDATE auth.users 
-  SET 
-    raw_user_meta_data = COALESCE(raw_user_meta_data, '{}'::jsonb) || 
+  -- Update both raw_user_meta_data AND user_metadata for OAuth compatibility
+  UPDATE auth.users
+  SET
+    raw_user_meta_data = COALESCE(raw_user_meta_data, '{}'::jsonb) ||
                          jsonb_build_object(
-                           'account_deleted', true, 
+                           'account_deleted', true,
                            'deleted_at', now()::text,
                            'deletion_log_id', NEW.id::text
                          ),
+    user_metadata = COALESCE(user_metadata, '{}'::jsonb) ||
+                    jsonb_build_object(
+                      'account_deleted', true,
+                      'deleted_at', now()::text,
+                      'deletion_log_id', NEW.id::text
+                    ),
     updated_at = now()
   WHERE id = NEW.user_id;
   
@@ -252,9 +259,11 @@ BEGIN
   user_id_to_restore := deletion_record.user_id;
   
   -- Restore user metadata
-  UPDATE auth.users 
-  SET 
+  -- Remove deletion flags from both raw_user_meta_data AND user_metadata for OAuth compatibility
+  UPDATE auth.users
+  SET
     raw_user_meta_data = raw_user_meta_data - 'account_deleted' - 'deleted_at' - 'deletion_log_id',
+    user_metadata = user_metadata - 'account_deleted' - 'deleted_at' - 'deletion_log_id',
     updated_at = now()
   WHERE id = user_id_to_restore;
   

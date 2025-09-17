@@ -69,6 +69,31 @@ export const authMiddleware = async (c: Context, next: () => Promise<void | Resp
 
     const user = validationResult.user;
 
+    // 🔒 NEW: Check if account is deleted (OAuth compatibility fix)
+    const isAccountDeleted = user?.user_metadata?.account_deleted === true ||
+                             (user as any)?.raw_user_meta_data?.account_deleted === true;
+
+    if (isAccountDeleted) {
+      // 🔒 Log security event for deleted account access attempt
+      securityMonitor.logEvent({
+        userId: user?.id,
+        eventType: 'deleted_account_access_attempt',
+        ipAddress: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown',
+        userAgent: c.req.header('user-agent') || 'unknown',
+        details: {
+          email: user?.email || 'unknown',
+          reason: 'Account is deleted but user attempted access'
+        },
+        severity: 'medium'
+      });
+
+      return c.json({
+        error: 'Cuenta eliminada. Contacta soporte si crees que esto es un error.',
+        code: 'ACCOUNT_DELETED',
+        message: 'Esta cuenta ha sido eliminada y no puede acceder al sistema'
+      }, 401);
+    }
+
     // 🔒 NEW: Log successful authentication
     securityMonitor.logEvent({
       userId: user?.id,
