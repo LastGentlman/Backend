@@ -28,7 +28,7 @@ const auth = new Hono();
 
 // Register new user - Versión simplificada con error handler
 auth.post("/register", validateRequest(registerSchema), async (c) => {
-  const { email, password, name } = getValidatedData<typeof registerSchema._type>(c);
+  const { email, password, name } = getValidatedData<z.infer<typeof registerSchema>>(c);
   const supabase = getSupabaseClient();
   const logger = SecureLogger.getInstance();
 
@@ -100,7 +100,7 @@ auth.post("/register", validateRequest(registerSchema), async (c) => {
 
 // Login user - Con rate limiting condicional (solo en producción)
 auth.post("/login", conditionalAuthRateLimiter(), validateRequest(loginSchema), async (c) => {
-  const { email, password } = getValidatedData<typeof loginSchema._type>(c);
+  const { email, password } = getValidatedData<z.infer<typeof loginSchema>>(c);
   const supabase = getSupabaseClient();
 
   const { data, error } = await supabase.auth.signInWithPassword({
@@ -466,7 +466,7 @@ const changePasswordSchema = z.object({
 
 auth.post("/change-password", authMiddleware, validateRequest(changePasswordSchema), async (c) => {
   try {
-    const { currentPassword, newPassword, confirmPassword } = getValidatedData<typeof changePasswordSchema._type>(c);
+    const { currentPassword, newPassword, confirmPassword } = getValidatedData<z.infer<typeof changePasswordSchema>>(c);
     const user = getUserFromContext(c);
     const logger = SecureLogger.getInstance();
 
@@ -868,7 +868,7 @@ auth.delete("/account", authMiddleware, async (c) => {
     }
 
     // 📊 COMPLIANCE: Export user data before deletion (optional)
-    let exportData = null;
+    let exportData: any = null;
     try {
       exportData = await dataExportService.exportUserData(user.id, {
         includeOrders: true,
@@ -882,9 +882,10 @@ auth.delete("/account", authMiddleware, async (c) => {
       // Continue with deletion even if export fails
     }
 
-    // 📋 COMPLIANCE: Log deletion to compliance table (optional)
+    // 📋 COMPLIANCE: Log deletion to compliance table with grace period
+    let deletionLogId: string | null = null;
     try {
-      const { error: logError } = await supabase
+      const { data: deletionLog, error: logError } = await supabase
         .from('account_deletion_logs')
         .insert({
           user_id: user.id,
@@ -901,157 +902,38 @@ auth.delete("/account", authMiddleware, async (c) => {
           grace_period_start: new Date().toISOString(),
           grace_period_end: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(), // 90 days
           data_exported: !!exportData,
-          data_export_path: exportData?.file_path || null
-        });
+          data_export_path: exportData?.file_path || null,
+          status: 'pending'
+        })
+        .select('id')
+        .single();
 
       if (logError) {
         console.warn('Warning: Could not log deletion to compliance table:', logError);
+        return c.json({ 
+          error: "Error al registrar eliminación de cuenta",
+          code: "DELETION_LOG_ERROR"
+        }, 500);
       } else {
-        console.log(`📋 Compliance log created for user: ${user.email}`);
+        deletionLogId = deletionLog.id;
+        console.log(`📋 Compliance log created for user: ${user.email} with ID: ${deletionLogId}`);
       }
     } catch (logError) {
       console.warn('Warning: Could not create compliance log:', logError);
-      // Continue with deletion even if logging fails
+      return c.json({ 
+        error: "Error al registrar eliminación de cuenta",
+        code: "DELETION_LOG_ERROR"
+      }, 500);
     }
 
-    // 🗑️ STEP 1: Delete user's avatar files from storage
-    try {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('avatar_url')
-        .eq('id', user.id)
-        .single();
-
-      if (profile?.avatar_url) {
-        const avatarPath = profile.avatar_url.split('/').pop();
-        if (avatarPath) {
-          await supabase.storage
-            .from('avatars')
-            .remove([avatarPath]);
-        }
-      }
-    } catch (storageError) {
-      console.warn('Warning: Could not delete avatar files:', storageError);
-      // Continue with account deletion even if avatar deletion fails
-    }
-
-    // 🗑️ STEP 2: Delete dependent rows in correct order (to avoid FK violations)
-    console.log('🗑️ Starting cascade deletion for user:', user.id);
+    // ✅ NEW: The trigger will handle marking user as deleted and invalidating sessions
+    // We don't need to do immediate deletion anymore - the grace period system handles it
     
-    try {
-      // 1) Remove business invitation usage
-      await supabase
-        .from('business_invitation_usage')
-        .delete()
-        .eq('used_by', user.id);
+    // 🚪 STEP: Force logout user immediately (sessions will be invalidated by trigger)
+    await tokenService.forceLogoutUser(user.id, 'Account deletion initiated', user.id);
 
-      // 2) Remove business invitation codes created by this user
-      await supabase
-        .from('business_invitation_codes')
-        .delete()
-        .eq('created_by', user.id);
-
-      // 3) Remove push subscriptions
-      await supabase
-        .from('push_subscriptions')
-        .delete()
-        .eq('user_id', user.id);
-
-      // 4) Remove notification logs
-      await supabase
-        .from('notification_logs')
-        .delete()
-        .eq('user_id', user.id);
-
-      // 5) Remove error logs
-      await supabase
-        .from('error_logs')
-        .delete()
-        .eq('user_id', user.id);
-
-      // 6) Remove backup metadata
-      await supabase
-        .from('backup_metadata')
-        .delete()
-        .eq('user_id', user.id);
-
-      // 7) Remove Indexes entries
-      await supabase
-        .from('Indexes')
-        .delete()
-        .eq('user_id', user.id);
-
-      // 8) Remove conflict resolutions
-      await supabase
-        .from('conflict_resolutions')
-        .delete()
-        .eq('resolved_by', user.id);
-
-      // 9) Remove employees rows
-      await supabase
-        .from('employees')
-        .delete()
-        .eq('user_id', user.id);
-
-      // 10) Update orders to null modified_by
-      await supabase
-        .from('orders')
-        .update({ modified_by: null })
-        .eq('modified_by', user.id);
-
-      // 11) Update businesses to null owner_id (if user is owner)
-      await supabase
-        .from('businesses')
-        .update({ owner_id: null })
-        .eq('owner_id', user.id);
-
-      // 12) Clear current_business_id from profile
-      await supabase
-        .from('profiles')
-        .update({ current_business_id: null })
-        .eq('id', user.id);
-
-      console.log('✅ All dependent rows deleted/updated successfully');
-
-    } catch (cascadeError) {
-      console.error('Error during cascade deletion:', cascadeError);
-      return c.json({ 
-        error: "Error al eliminar datos relacionados",
-        code: "CASCADE_DELETE_ERROR",
-        details: cascadeError instanceof Error ? cascadeError.message : "Error desconocido"
-      }, 500);
-    }
-
-    // 🗑️ STEP 3: Delete profile data (now safe to delete)
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .delete()
-      .eq('id', user.id);
-
-    if (profileError) {
-      console.error('Error deleting profile:', profileError);
-      return c.json({ 
-        error: "Error al eliminar perfil",
-        code: "PROFILE_DELETE_ERROR"
-      }, 500);
-    }
-
-    // 🗑️ STEP 4: Blacklist all user tokens
-    await tokenService.forceLogoutUser(user.id, 'Account deletion', user.id);
-
-    // 🗑️ STEP 5: Delete user from Supabase Auth
-    const { error: authError } = await supabase.auth.admin.deleteUser(user.id);
-    
-    if (authError) {
-      console.error('Error deleting user from auth:', authError);
-      return c.json({ 
-        error: "Error al eliminar cuenta de autenticación",
-        code: "AUTH_DELETE_ERROR"
-      }, 500);
-    }
-
-    // ✅ SUCCESS: Log successful deletion
-    console.log(`✅ Account successfully deleted for user: ${user.email} (${user.id})`);
+    // ✅ SUCCESS: Return success with grace period information
+    console.log(`✅ Account deletion initiated for user: ${user.email} (${user.id}) with grace period`);
 
     // 📧 EMAIL: Send notification to business owner if employee (optional)
     if (employee) {
@@ -1072,14 +954,97 @@ auth.delete("/account", authMiddleware, async (c) => {
     }
 
     return c.json({ 
-      message: "Cuenta eliminada exitosamente",
-      code: "ACCOUNT_DELETED_SUCCESS",
+      message: "Cuenta marcada para eliminación. Período de gracia: 90 días.",
+      code: "ACCOUNT_DELETION_INITIATED",
+      userId: user.id,
+      deletionLogId: deletionLogId,
+      gracePeriodEnd: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+      timestamp: new Date().toISOString()
+    });
+
+
+
+  } catch (error) {
+    console.error('Unexpected error in DELETE /auth/account:', error);
+    return c.json({ 
+      error: "Error interno del servidor",
+      code: "INTERNAL_SERVER_ERROR",
+      details: error instanceof Error ? error.message : "Error desconocido"
+    }, 500);
+  }
+});
+
+// 🔄 NEW: Cancel account deletion during grace period
+auth.post("/account/cancel-deletion", authMiddleware, async (c) => {
+  try {
+    const user = getUserFromContext(c);
+    
+    if (!user) {
+      return c.json({ 
+        error: "Usuario no autenticado",
+        code: "UNAUTHORIZED"
+      }, 401);
+    }
+
+    const supabase = getSupabaseClient();
+
+    // Get the pending deletion log for this user
+    const { data: deletionLog, error: logError } = await supabase
+      .from('account_deletion_logs')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('status', 'pending')
+      .single();
+
+    if (logError || !deletionLog) {
+      return c.json({ 
+        error: "No se encontró una eliminación pendiente para cancelar",
+        code: "NO_PENDING_DELETION"
+      }, 404);
+    }
+
+    // Check if grace period has expired
+    const gracePeriodEnd = new Date(deletionLog.grace_period_end);
+    const now = new Date();
+    
+    if (now > gracePeriodEnd) {
+      return c.json({ 
+        error: "El período de gracia ha expirado. No se puede cancelar la eliminación.",
+        code: "GRACE_PERIOD_EXPIRED"
+      }, 400);
+    }
+
+    // Call the cancel function
+    const { data: cancelResult, error: cancelError } = await supabase.rpc('cancel_account_deletion', {
+      deletion_log_id: deletionLog.id
+    });
+
+    if (cancelError) {
+      console.error('Error cancelling account deletion:', cancelError);
+      return c.json({ 
+        error: "Error al cancelar la eliminación de cuenta",
+        code: "CANCEL_DELETION_ERROR"
+      }, 500);
+    }
+
+    if (!cancelResult?.success) {
+      return c.json({ 
+        error: cancelResult?.error || "Error desconocido al cancelar eliminación",
+        code: "CANCEL_DELETION_FAILED"
+      }, 500);
+    }
+
+    console.log(`✅ Account deletion cancelled for user: ${user.email} (${user.id})`);
+
+    return c.json({ 
+      message: "Eliminación de cuenta cancelada exitosamente",
+      code: "ACCOUNT_DELETION_CANCELLED",
       userId: user.id,
       timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error('Unexpected error in DELETE /auth/account:', error);
+    console.error('Unexpected error in POST /auth/account/cancel-deletion:', error);
     return c.json({ 
       error: "Error interno del servidor",
       code: "INTERNAL_SERVER_ERROR",
@@ -1358,7 +1323,7 @@ const verifyTokenSchema = z.object({
 
 auth.post("/verify-token", validateRequest(verifyTokenSchema), async (c) => {
   try {
-    const { token } = getValidatedData<typeof verifyTokenSchema._type>(c);
+    const { token } = getValidatedData<z.infer<typeof verifyTokenSchema>>(c);
     const logger = SecureLogger.getInstance();
 
     // 🔒 ENHANCED: Use TokenManagementService for comprehensive validation
@@ -1418,7 +1383,7 @@ const heartbeatSchema = z.object({
 
 auth.post("/heartbeat", authMiddleware, validateRequest(heartbeatSchema), (c) => {
   try {
-    const { timestamp, userAgent } = getValidatedData<typeof heartbeatSchema._type>(c);
+    const { timestamp, userAgent } = getValidatedData<z.infer<typeof heartbeatSchema>>(c);
     const user = getUserFromContext(c);
     const logger = SecureLogger.getInstance();
 
@@ -1462,7 +1427,7 @@ const setPasswordSchema = z.object({
 
 auth.post("/set-password", authMiddleware, validateRequest(setPasswordSchema), async (c) => {
   try {
-    const { newPassword, confirmPassword } = getValidatedData<typeof setPasswordSchema._type>(c);
+    const { newPassword, confirmPassword } = getValidatedData<z.infer<typeof setPasswordSchema>>(c);
     const user = getUserFromContext(c);
     const logger = SecureLogger.getInstance();
 
