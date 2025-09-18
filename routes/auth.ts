@@ -799,6 +799,14 @@ auth.delete("/account", authMiddleware, async (c) => {
     }
 
     const supabase = getSupabaseClient();
+    
+    // Parse request body for deletion options
+    const body = await c.req.json().catch(() => ({}));
+    const { 
+      immediate = false, 
+      reason = 'Solicitud del usuario',
+      gracePeriodDays = 90 
+    } = body;
 
     // 🔒 SECURITY: Check if user has pending orders or active business
     if (employee) {
@@ -852,7 +860,7 @@ auth.delete("/account", authMiddleware, async (c) => {
     }
 
     // 🔒 SECURITY: Log the account deletion attempt
-    console.warn(`🗑️ Account deletion requested for user: ${user.email} (${user.id})`);
+    console.warn(`🗑️ Account deletion requested for user: ${user.email} (${user.id}) - Immediate: ${immediate}`);
 
     // 📋 COMPLIANCE: Get user statistics for logging
     let userStats = { total_orders: 0, account_age_days: 0 };
@@ -865,6 +873,57 @@ auth.delete("/account", authMiddleware, async (c) => {
       }
     } catch (statsError) {
       console.warn('Warning: Could not get user stats for logging:', statsError);
+    }
+
+    // 🚀 IMMEDIATE DELETION: Handle immediate deletion if requested
+    if (immediate) {
+      console.log(`⚡ Immediate deletion requested for user: ${user.email} (${user.id})`);
+      
+      try {
+        // Use the new delete_user_completely function
+        const { data: deletionResult, error: deletionError } = await supabase.rpc('delete_user_completely', {
+          user_uuid: user.id
+        });
+
+        if (deletionError) {
+          console.error('Error in immediate deletion:', deletionError);
+          return c.json({ 
+            error: "Error eliminando cuenta inmediatamente",
+            code: "IMMEDIATE_DELETION_ERROR",
+            details: deletionError.message
+          }, 500);
+        }
+
+        if (!deletionResult?.success) {
+          console.error('Immediate deletion failed:', deletionResult);
+          return c.json({ 
+            error: deletionResult?.error || "Error desconocido en eliminación inmediata",
+            code: "IMMEDIATE_DELETION_FAILED"
+          }, 500);
+        }
+
+        // Force logout user immediately
+        await tokenService.forceLogoutUser(user.id, 'Account deleted immediately', user.id);
+
+        console.log(`✅ Immediate account deletion completed for user: ${user.email} (${user.id})`);
+
+        return c.json({ 
+          message: "Cuenta eliminada completamente",
+          code: "ACCOUNT_DELETED_IMMEDIATELY",
+          userId: user.id,
+          deletionMethod: 'immediate',
+          tablesCleaned: deletionResult.tables_cleaned,
+          timestamp: new Date().toISOString()
+        });
+
+      } catch (immediateError) {
+        console.error('Unexpected error in immediate deletion:', immediateError);
+        return c.json({ 
+          error: "Error inesperado en eliminación inmediata",
+          code: "IMMEDIATE_DELETION_UNEXPECTED_ERROR",
+          details: immediateError instanceof Error ? immediateError.message : "Error desconocido"
+        }, 500);
+      }
     }
 
     // 📊 COMPLIANCE: Export user data before deletion (optional)
@@ -900,7 +959,7 @@ auth.delete("/account", authMiddleware, async (c) => {
           user_agent: c.req.header('user-agent'),
           deletion_method: 'self_deletion',
           grace_period_start: new Date().toISOString(),
-          grace_period_end: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(), // 90 days
+          grace_period_end: new Date(Date.now() + gracePeriodDays * 24 * 60 * 60 * 1000).toISOString(),
           data_exported: !!exportData,
           data_export_path: exportData?.file_path || null,
           status: 'pending'
@@ -954,11 +1013,13 @@ auth.delete("/account", authMiddleware, async (c) => {
     }
 
     return c.json({ 
-      message: "Cuenta marcada para eliminación. Período de gracia: 90 días.",
+      message: `Cuenta marcada para eliminación. Período de gracia: ${gracePeriodDays} días.`,
       code: "ACCOUNT_DELETION_INITIATED",
       userId: user.id,
       deletionLogId: deletionLogId,
-      gracePeriodEnd: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+      gracePeriodDays: gracePeriodDays,
+      gracePeriodEnd: new Date(Date.now() + gracePeriodDays * 24 * 60 * 60 * 1000).toISOString(),
+      deletionMethod: 'grace_period',
       timestamp: new Date().toISOString()
     });
 
@@ -1540,6 +1601,143 @@ auth.post("/set-password", authMiddleware, validateRequest(setPasswordSchema), a
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Error al establecer contraseña";
     return c.json({ error: errorMessage }, 500);
+  }
+});
+
+// 🔒 NEW: Delete business endpoint
+auth.delete("/business/:businessId", authMiddleware, async (c) => {
+  try {
+    const user = getUserFromContext(c);
+    const employee = getEmployeeFromContext(c);
+    
+    if (!user) {
+      return c.json({ 
+        error: "Usuario no autenticado",
+        code: "UNAUTHORIZED"
+      }, 401);
+    }
+
+    const businessId = c.req.param('businessId');
+    if (!businessId) {
+      return c.json({ 
+        error: "ID de negocio requerido",
+        code: "BUSINESS_ID_REQUIRED"
+      }, 400);
+    }
+
+    const supabase = getSupabaseClient();
+
+    // Parse request body for deletion options
+    const body = await c.req.json().catch(() => ({}));
+    const { 
+      immediate = false, 
+      reason = 'Solicitud del usuario'
+    } = body;
+
+    // 🔒 SECURITY: Verify user has permission to delete this business
+    if (!employee || employee.business_id !== businessId) {
+      return c.json({ 
+        error: "No tienes permisos para eliminar este negocio",
+        code: "INSUFFICIENT_PERMISSIONS"
+      }, 403);
+    }
+
+    // 🔒 SECURITY: Check if user is owner or has delete permissions
+    if (employee.role !== 'owner') {
+      return c.json({ 
+        error: "Solo el propietario puede eliminar el negocio",
+        code: "OWNER_REQUIRED"
+      }, 403);
+    }
+
+    // 🔒 SECURITY: Check for pending orders
+    const { data: pendingOrders, error: ordersError } = await supabase
+      .from('orders')
+      .select('id, status')
+      .eq('business_id', businessId)
+      .in('status', ['pending', 'confirmed', 'in_progress']);
+
+    if (ordersError) {
+      console.error('Error checking pending orders:', ordersError);
+      return c.json({ 
+        error: "Error al verificar pedidos pendientes",
+        code: "ORDERS_CHECK_ERROR"
+      }, 500);
+    }
+
+    if (pendingOrders && pendingOrders.length > 0) {
+      return c.json({ 
+        error: "No puedes eliminar el negocio mientras tengas pedidos pendientes",
+        code: "PENDING_ORDERS_EXIST",
+        pendingOrders: pendingOrders.length
+      }, 400);
+    }
+
+    // 🔒 SECURITY: Log the business deletion attempt
+    console.warn(`🗑️ Business deletion requested for business: ${businessId} by user: ${user.email} (${user.id}) - Immediate: ${immediate}`);
+
+    // 🚀 IMMEDIATE DELETION: Handle immediate deletion if requested
+    if (immediate) {
+      console.log(`⚡ Immediate business deletion requested for business: ${businessId}`);
+      
+      try {
+        // Use the new delete_business_completely function
+        const { data: deletionResult, error: deletionError } = await supabase.rpc('delete_business_completely', {
+          business_uuid: businessId
+        });
+
+        if (deletionError) {
+          console.error('Error in immediate business deletion:', deletionError);
+          return c.json({ 
+            error: "Error eliminando negocio inmediatamente",
+            code: "IMMEDIATE_BUSINESS_DELETION_ERROR",
+            details: deletionError.message
+          }, 500);
+        }
+
+        if (!deletionResult?.success) {
+          console.error('Immediate business deletion failed:', deletionResult);
+          return c.json({ 
+            error: deletionResult?.error || "Error desconocido en eliminación inmediata del negocio",
+            code: "IMMEDIATE_BUSINESS_DELETION_FAILED"
+          }, 500);
+        }
+
+        console.log(`✅ Immediate business deletion completed for business: ${businessId}`);
+
+        return c.json({ 
+          message: "Negocio eliminado completamente",
+          code: "BUSINESS_DELETED_IMMEDIATELY",
+          businessId: businessId,
+          deletionMethod: 'immediate',
+          tablesCleaned: deletionResult.tables_cleaned,
+          timestamp: new Date().toISOString()
+        });
+
+      } catch (immediateError) {
+        console.error('Unexpected error in immediate business deletion:', immediateError);
+        return c.json({ 
+          error: "Error inesperado en eliminación inmediata del negocio",
+          code: "IMMEDIATE_BUSINESS_DELETION_UNEXPECTED_ERROR",
+          details: immediateError instanceof Error ? immediateError.message : "Error desconocido"
+        }, 500);
+      }
+    }
+
+    // For now, we only support immediate business deletion
+    // In the future, we could add grace period for business deletion too
+    return c.json({ 
+      error: "Eliminación de negocio con período de gracia no implementada. Usa immediate: true",
+      code: "GRACE_PERIOD_NOT_IMPLEMENTED"
+    }, 400);
+
+  } catch (error) {
+    console.error('Unexpected error in DELETE /auth/business/:businessId:', error);
+    return c.json({ 
+      error: "Error interno del servidor",
+      code: "INTERNAL_SERVER_ERROR",
+      details: error instanceof Error ? error.message : "Error desconocido"
+    }, 500);
   }
 });
 
