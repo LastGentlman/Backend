@@ -53,8 +53,8 @@ export class TokenManagementService {
         return { isValid: false, type: 'invalid', reason: 'Invalid JWT structure' };
       }
 
-      const header = JSON.parse(atob(parts[0]));
-      const payload = JSON.parse(atob(parts[1]));
+      const header = JSON.parse(atob(parts[0] || ''));
+      const payload = JSON.parse(atob(parts[1] || ''));
 
       // Validate header
       if (!header.alg || !header.typ) {
@@ -203,6 +203,18 @@ export class TokenManagementService {
           isValid: false,
           error: 'Cuenta suspendida por seguridad',
           code: 'ACCOUNT_COMPROMISED'
+        };
+      }
+
+      // 🔒 NEW: Check if account is deleted (OAuth compatibility fix)
+      const isAccountDeleted = user?.user_metadata?.['account_deleted'] === true ||
+                               (user as { raw_user_meta_data?: { account_deleted?: boolean } })?.raw_user_meta_data?.['account_deleted'] === true;
+
+      if (isAccountDeleted) {
+        return {
+          isValid: false,
+          error: 'Cuenta eliminada. Contacta soporte si crees que esto es un error.',
+          code: 'ACCOUNT_DELETED'
         };
       }
 
