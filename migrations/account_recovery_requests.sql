@@ -26,6 +26,12 @@ CREATE INDEX IF NOT EXISTS idx_account_recovery_requests_deletion_log_id ON acco
 -- RLS (Row Level Security) policies
 ALTER TABLE account_recovery_requests ENABLE ROW LEVEL SECURITY;
 
+-- Drop existing policies if they exist
+DROP POLICY IF EXISTS "Users can view own recovery requests" ON account_recovery_requests;
+DROP POLICY IF EXISTS "Users can create recovery requests" ON account_recovery_requests;
+DROP POLICY IF EXISTS "Owners can update recovery requests" ON account_recovery_requests;
+DROP POLICY IF EXISTS "Owners can view all recovery requests" ON account_recovery_requests;
+
 -- Policy: Users can only see their own recovery requests
 CREATE POLICY "Users can view own recovery requests" ON account_recovery_requests
   FOR SELECT USING (email = auth.jwt() ->> 'email');
@@ -34,23 +40,25 @@ CREATE POLICY "Users can view own recovery requests" ON account_recovery_request
 CREATE POLICY "Users can create recovery requests" ON account_recovery_requests
   FOR INSERT WITH CHECK (true);
 
--- Policy: Only admins can update recovery requests
-CREATE POLICY "Admins can update recovery requests" ON account_recovery_requests
+-- Policy: Only owners can update recovery requests
+CREATE POLICY "Owners can update recovery requests" ON account_recovery_requests
   FOR UPDATE USING (
     EXISTS (
-      SELECT 1 FROM profiles 
-      WHERE profiles.id = auth.uid() 
-      AND profiles.role = 'admin'
+      SELECT 1 FROM employees 
+      WHERE employees.user_id = auth.uid() 
+      AND employees.role = 'owner'
+      AND employees.is_active = true
     )
   );
 
--- Policy: Only admins can view all recovery requests
-CREATE POLICY "Admins can view all recovery requests" ON account_recovery_requests
+-- Policy: Only owners can view all recovery requests
+CREATE POLICY "Owners can view all recovery requests" ON account_recovery_requests
   FOR SELECT USING (
     EXISTS (
-      SELECT 1 FROM profiles 
-      WHERE profiles.id = auth.uid() 
-      AND profiles.role = 'admin'
+      SELECT 1 FROM employees 
+      WHERE employees.user_id = auth.uid() 
+      AND employees.role = 'owner'
+      AND employees.is_active = true
     )
   );
 
@@ -61,9 +69,10 @@ BEGIN
   NEW.updated_at = NOW();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 -- Trigger to automatically update updated_at
+DROP TRIGGER IF EXISTS trigger_update_account_recovery_requests_updated_at ON account_recovery_requests;
 CREATE TRIGGER trigger_update_account_recovery_requests_updated_at
   BEFORE UPDATE ON account_recovery_requests
   FOR EACH ROW
@@ -75,7 +84,7 @@ RETURNS BOOLEAN AS $$
 BEGIN
   RETURN (NOW() - deletion_date) <= INTERVAL '30 days';
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 -- Function to get recovery status for an email
 CREATE OR REPLACE FUNCTION get_recovery_status(user_email VARCHAR)
@@ -102,7 +111,7 @@ BEGIN
   ORDER BY ar.requested_at DESC
   LIMIT 1;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 -- Grant necessary permissions
 GRANT SELECT, INSERT ON account_recovery_requests TO authenticated;
