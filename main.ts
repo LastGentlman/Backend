@@ -33,6 +33,7 @@ import monitoringRoutes from "./routes/monitoring.ts";
 import productsRoutes from "./routes/products.ts";
 import clientsRoutes from "./routes/clients.ts";
 import backupRoutes from "./routes/backup.ts";
+import accountRecoveryRoutes from "./routes/account-recovery.ts";
 
 // ===== CARGA DE VARIABLES DE ENTORNO =====
 // ✅ MEJOR PRÁCTICA: Manejo de errores más específico
@@ -186,6 +187,7 @@ app.get("/health", async (c) => {
 
 // ===== RUTAS PÚBLICAS =====
 app.route("/api/auth", authRoutes);
+app.route("/api/auth", accountRecoveryRoutes);
 app.route("/api/whatsapp", whatsappRoutes);
 app.route("/api/k6", k6Routes);
 app.route("/api/monitoring", monitoringRoutes);
