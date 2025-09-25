@@ -1,0 +1,14 @@
+{
+  "name": "pedidolist-load-tests",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test:quick": "k6 run quick-test.ts",
+    "test:orders": "k6 run orders_sync_load.ts",
+    "test:monitoring": "k6 run monitoring_load.ts",
+    "test:all": "k6 run orders_sync_load.ts && k6 run monitoring_load.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  }
+} 

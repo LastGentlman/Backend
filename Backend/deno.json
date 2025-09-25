@@ -1,0 +1,47 @@
+{
+  "denoVersion": "2.2.14",
+  "importMap": "import_map.json",
+  "tasks": {
+    "dev": "deno run --allow-env --allow-net --allow-read --watch main.ts",
+    "start": "deno run --allow-net --allow-env --allow-read main.ts",
+    "test": "deno test --allow-env --allow-net --allow-read",
+    "lint": "deno lint",
+    "fmt": "deno fmt",
+    "check": "deno check main.ts",
+    "build": "deno cache main.ts",
+    "upgrade": "deno upgrade --version 2.2.14"
+  },
+  "compilerOptions": {
+    "lib": ["deno.ns", "deno.window", "deno.unstable"],
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"],
+      "exclude": ["no-unused-vars"]
+    },
+    "exclude": ["build/", "dist/", "_fresh/"]
+  },
+  "fmt": {
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "preserve"
+  },
+  "deploy": {
+    "project": "2152c28f-7840-4177-879a-d3162e1ae606",
+    "exclude": ["**/node_modules", "**/*.test.ts"],
+    "entrypoint": "main.ts"
+  },
+  "nodeModulesDir": "none"
+}
