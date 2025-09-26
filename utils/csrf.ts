@@ -3,7 +3,6 @@ import { getSupabaseClient } from "./supabase.ts";
 
 // Supabase-backed CSRF token storage
 const supabase = getSupabaseClient();
-const CSRF_PREFIX = "csrf";
 const CSRF_TTL_SECONDS = 30 * 60; // 30 minutes
 
 /**
@@ -31,8 +30,7 @@ export function generateCSRFToken(sessionId: string): string {
 /**
  * Valida un token CSRF
  */
-export function validateCSRFToken(sessionId: string, _token: string): boolean {
-  const _key = `${CSRF_PREFIX}:${sessionId}`;
+export function validateCSRFToken(_sessionId: string, _token: string): boolean {
   // Synchronous-style check using async getter with simple deopt (will be awaited in middleware usage if needed)
   // Here we cannot block synchronously; callers should await an async variant if required.
   // For compatibility, we optimistically return true only after matching value.
@@ -86,11 +84,11 @@ export function csrfProtection() {
         '/api/auth/confirm-email',
         '/api/auth/resend-confirmation',
         '/api/auth/recover-account',
-        '/api/orders/sync'  // Excluir sync para load testing
+        '/api/orders/sync',  // Excluir sync para load testing
+        '/api/business/activate-trial'  // Excluir activación de trial
       ];
       if (excludedEndpoints.includes(path)) {
-        await next();
-        return;
+        return await next();
       }
       
       const sessionId = c.req.header('X-Session-ID');
@@ -115,7 +113,7 @@ export function csrfProtection() {
       }
     }
     
-    await next();
+    return await next();
   };
 }
 
