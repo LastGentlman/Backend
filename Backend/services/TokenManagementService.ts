@@ -206,15 +206,61 @@ export class TokenManagementService {
         };
       }
 
-      // 🔒 NEW: Check if account is deleted (OAuth compatibility fix)
+      // 🔒 ENHANCED: Check if account is deleted with grace period support
       const isAccountDeleted = user?.user_metadata?.['account_deleted'] === true ||
                                (user as { raw_user_meta_data?: { account_deleted?: boolean } })?.raw_user_meta_data?.['account_deleted'] === true;
 
       if (isAccountDeleted) {
+        // Get deletion info from metadata
+        const deletedAt = user?.user_metadata?.['deleted_at'] ||
+                         (user as { raw_user_meta_data?: { deleted_at?: string } })?.raw_user_meta_data?.['deleted_at'];
+        const deletionLogId = user?.user_metadata?.['deletion_log_id'] ||
+                             (user as { raw_user_meta_data?: { deletion_log_id?: string } })?.raw_user_meta_data?.['deletion_log_id'];
+
+        // Check if still in grace period by querying deletion log
+        if (deletionLogId) {
+          try {
+            const supabase = this.getSupabase();
+            const { data: deletionLog, error } = await supabase
+              .from('account_deletion_logs')
+              .select('grace_period_end, status')
+              .eq('id', deletionLogId)
+              .single();
+
+            if (!error && deletionLog) {
+              const gracePeriodEnd = new Date(deletionLog.grace_period_end);
+              const now = new Date();
+
+              if (deletionLog.status === 'pending' && now < gracePeriodEnd) {
+                // Still in grace period - account can be recovered
+                const daysRemaining = Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                return {
+                  isValid: false,
+                  error: `Cuenta marcada para eliminación. Puedes recuperarla en los próximos ${daysRemaining} días.`,
+                  code: 'ACCOUNT_PENDING_DELETION',
+                  metadata: {
+                    gracePeriodEnd: gracePeriodEnd.toISOString(),
+                    daysRemaining,
+                    canRecover: true,
+                    deletionLogId
+                  }
+                };
+              }
+            }
+          } catch (dbError) {
+            console.warn('Could not check grace period:', dbError);
+          }
+        }
+
+        // Grace period expired or other deletion status
         return {
           isValid: false,
-          error: 'Cuenta eliminada. Contacta soporte si crees que esto es un error.',
-          code: 'ACCOUNT_DELETED'
+          error: 'Cuenta eliminada permanentemente. Crea una nueva cuenta para continuar.',
+          code: 'ACCOUNT_DELETED_PERMANENTLY',
+          metadata: {
+            canRecover: false,
+            deletedAt
+          }
         };
       }
 
