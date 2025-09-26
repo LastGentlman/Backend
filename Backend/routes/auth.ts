@@ -1099,9 +1099,12 @@ auth.post("/account/cancel-deletion", authMiddleware, async (c) => {
       }, 500);
     }
 
+    // Clear grace period cache to ensure fresh validation
+    tokenService.clearGracePeriodCache(user.id);
+
     console.log(`✅ Account deletion cancelled for user: ${user.email} (${user.id})`);
 
-    return c.json({ 
+    return c.json({
       message: "Eliminación de cuenta cancelada exitosamente",
       code: "ACCOUNT_DELETION_CANCELLED",
       userId: user.id,

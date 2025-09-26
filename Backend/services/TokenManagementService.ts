@@ -26,6 +26,7 @@ const compromisedMeta = new Map<string, { userId: string; reason: string; marked
 export class TokenManagementService {
   private static instance: TokenManagementService;
   private supabase: ReturnType<typeof getSupabaseClient> | null = null;
+  private gracePeriodCache: Map<string, any> | null = null;
 
   private constructor() {}
 
@@ -141,6 +142,15 @@ export class TokenManagementService {
   }
 
   /**
+   * Clears grace period cache for a user (used when account deletion is canceled)
+   */
+  public clearGracePeriodCache(userId: string): void {
+    if (this.gracePeriodCache) {
+      this.gracePeriodCache.delete(`grace_period_${userId}`);
+    }
+  }
+
+  /**
    * Gets compromised account information
    */
   public getCompromisedAccountInfo(_userId: string): CompromisedAccount | undefined {
@@ -217,9 +227,48 @@ export class TokenManagementService {
         const deletionLogId = user?.user_metadata?.['deletion_log_id'] ||
                              (user as { raw_user_meta_data?: { deletion_log_id?: string } })?.raw_user_meta_data?.['deletion_log_id'];
 
-        // Check if still in grace period by querying deletion log
+        // 🔥 FIX: Add cache and circuit breaker to prevent database query loops
+        const gracePeriodCacheKey = `grace_period_${user.id}`;
+
+        // Check if still in grace period by querying deletion log (with circuit breaker)
         if (deletionLogId) {
           try {
+            // 🔥 FIX: Add a simple in-memory cache to prevent repeated DB queries
+            const now = new Date();
+            const cacheExpiry = 60000; // 1 minute cache
+
+            if (!this.gracePeriodCache) {
+              this.gracePeriodCache = new Map();
+            }
+
+            const cached = this.gracePeriodCache.get(gracePeriodCacheKey);
+            if (cached && (now.getTime() - cached.timestamp) < cacheExpiry) {
+              if (cached.isInGracePeriod) {
+                return {
+                  isValid: false,
+                  error: `Cuenta marcada para eliminación. Puedes recuperarla en los próximos ${cached.daysRemaining} días.`,
+                  code: 'ACCOUNT_PENDING_DELETION',
+                  metadata: {
+                    gracePeriodEnd: cached.gracePeriodEnd,
+                    daysRemaining: cached.daysRemaining,
+                    canRecover: true,
+                    deletionLogId
+                  }
+                };
+              } else {
+                return {
+                  isValid: false,
+                  error: 'Cuenta eliminada permanentemente. Crea una nueva cuenta para continuar.',
+                  code: 'ACCOUNT_DELETED_PERMANENTLY',
+                  metadata: {
+                    canRecover: false,
+                    deletedAt
+                  }
+                };
+              }
+            }
+
+            // Only query database if not cached
             const supabase = this.getSupabase();
             const { data: deletionLog, error } = await supabase
               .from('account_deletion_logs')
@@ -229,11 +278,19 @@ export class TokenManagementService {
 
             if (!error && deletionLog) {
               const gracePeriodEnd = new Date(deletionLog.grace_period_end);
-              const now = new Date();
 
               if (deletionLog.status === 'pending' && now < gracePeriodEnd) {
                 // Still in grace period - account can be recovered
                 const daysRemaining = Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+                // Cache the result
+                this.gracePeriodCache.set(gracePeriodCacheKey, {
+                  isInGracePeriod: true,
+                  gracePeriodEnd: gracePeriodEnd.toISOString(),
+                  daysRemaining,
+                  timestamp: now.getTime()
+                });
+
                 return {
                   isValid: false,
                   error: `Cuenta marcada para eliminación. Puedes recuperarla en los próximos ${daysRemaining} días.`,
@@ -245,10 +302,21 @@ export class TokenManagementService {
                     deletionLogId
                   }
                 };
+              } else {
+                // Cache the expired result
+                this.gracePeriodCache.set(gracePeriodCacheKey, {
+                  isInGracePeriod: false,
+                  timestamp: now.getTime()
+                });
               }
             }
           } catch (dbError) {
-            console.warn('Could not check grace period:', dbError);
+            console.warn('Could not check grace period (cached as expired):', dbError);
+            // Cache as expired to prevent repeated failed queries
+            this.gracePeriodCache?.set(gracePeriodCacheKey, {
+              isInGracePeriod: false,
+              timestamp: new Date().getTime()
+            });
           }
         }
 
