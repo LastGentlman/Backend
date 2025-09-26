@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "lib": ["deno.window"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "moduleResolution": "node",
+    "types": ["https://deno.land/x/hono@v3.12.0/types.ts"]
+  },
+  "importMap": "./import_map.json",
+  "tasks": {
+    "dev": "deno run --allow-env --allow-net --allow-read --watch main.ts",
+    "start": "deno run --allow-net --allow-env main.ts"
+  }
+} 
