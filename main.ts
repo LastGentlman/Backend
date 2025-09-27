@@ -32,7 +32,6 @@ import k6Routes from "./routes/k6.ts";
 import monitoringRoutes from "./routes/monitoring.ts";
 import productsRoutes from "./routes/products.ts";
 import clientsRoutes from "./routes/clients.ts";
-import backupRoutes from "./routes/backup.ts";
 import accountRecoveryRoutes from "./routes/account-recovery.ts";
 
 // ===== CARGA DE VARIABLES DE ENTORNO =====
@@ -200,7 +199,6 @@ const protectedRoutes = [
   "/api/clients/*",
   "/api/test/*",
   "/api/notifications/*",
-  "/api/backup/*"
 ] as const;
 
 // Aplicar autenticación
@@ -219,7 +217,6 @@ app.route("/api/orders", ordersRoutes);
 app.route("/api/business", businessRoutes);
 app.route("/api/products", productsRoutes);
 app.route("/api/clients", clientsRoutes);
-app.route("/api/backup", backupRoutes);
 app.route("/api/notifications", notificationsRoutes);
 
 // ===== MANEJO DE RUTAS NO ENCONTRADAS =====

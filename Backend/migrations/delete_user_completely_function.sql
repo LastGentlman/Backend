@@ -49,9 +49,6 @@ BEGIN
     DELETE FROM error_logs WHERE user_id = user_uuid;
     tables_cleaned := array_append(tables_cleaned, 'error_logs');
     
-    -- Delete backup metadata
-    DELETE FROM backup_metadata WHERE user_id = user_uuid;
-    tables_cleaned := array_append(tables_cleaned, 'backup_metadata');
     
     -- Delete indexes
     DELETE FROM indexes WHERE user_id = user_uuid;
